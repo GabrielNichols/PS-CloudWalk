@@ -1,0 +1,69 @@
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Builds/distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing/coverage/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Logs
+logs/
+*.log
+
+# Environment files
+.env
+.env.*
+!env.example
+
+# Data and checkpoints
+.data/
+checkpoints.sqlite3
+trafilatura-cache/
+
+# Project data outputs (keep the tracked seed list)
+data/**
+!data/infinitepay_urls.txt
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Serverless/platform
+.vercel/
+.render/
+
+# Docker overrides
+docker-compose.override.yml
+
+# Node (if used for tooling)
+node_modules/
+
+
