@@ -14,6 +14,7 @@ from app.rag.embeddings import get_embeddings
 from app.rag.vectorstore import Neo4jVectorStore
 import numpy as np
 from app.rag.graph_retriever import expand_query_to_pt
+from app.rag.graphrag_baseline import GraphRAGBaseline
 from langsmith import Client, traceable
 import uuid
 from dotenv import load_dotenv
@@ -168,11 +169,44 @@ def run():
         or "RAG-PSCloudWalk-v1"
     )
     experiment_run_id = str(uuid.uuid4())
+    import time
+
     for item in DATASET:
         q = item["question"]
+        g_start = time.perf_counter()
         g = score_graph(q)
+        g_ms = int((time.perf_counter() - g_start) * 1000)
+        v_start = time.perf_counter()
         v = score_vector(q)
-        row = {"q": q, "graph": round(g, 3), "vector": round(v, 3)}
+        v_ms = int((time.perf_counter() - v_start) * 1000)
+        # Baseline via neo4j-graphrag
+        base_start = time.perf_counter()
+        try:
+            baseline = GraphRAGBaseline()
+            base_res = baseline.search(q, top_k=5, return_context=True)
+            base_ms = int((time.perf_counter() - base_start) * 1000)
+            base_answer = base_res.get("answer")
+            base_ctx_len = len(str(base_res.get("context") or ""))
+        except Exception:
+            base_ms = 0
+            base_answer = None
+            base_ctx_len = 0
+        finally:
+            try:
+                baseline.close()
+            except Exception:
+                pass
+
+        row = {
+            "q": q,
+            "graph": round(g, 3),
+            "graph_ms": g_ms,
+            "vector": round(v, 3),
+            "vector_ms": v_ms,
+            "baseline_ms": base_ms,
+            "baseline_has_answer": bool(base_answer),
+            "baseline_ctx_len": base_ctx_len,
+        }
         results.append(row)
         if ls is not None:
             try:
@@ -182,6 +216,7 @@ def run():
                     key="rag-graph",
                     score=g,
                     comment=q,
+                    metadata={"latency_ms": g_ms},
                     source_info={"type": "eval", "question": q, "experiment": experiment_name},
                 )
                 ls.create_feedback(
@@ -189,6 +224,15 @@ def run():
                     key="rag-vector",
                     score=v,
                     comment=q,
+                    metadata={"latency_ms": v_ms},
+                    source_info={"type": "eval", "question": q, "experiment": experiment_name},
+                )
+                ls.create_feedback(
+                    run_id=experiment_run_id,
+                    key="graphrag-baseline",
+                    score=1.0 if base_answer else 0.0,
+                    comment=q,
+                    metadata={"latency_ms": base_ms, "ctx_len": base_ctx_len},
                     source_info={"type": "eval", "question": q, "experiment": experiment_name},
                 )
             except Exception as e:

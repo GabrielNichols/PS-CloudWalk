@@ -68,12 +68,22 @@ def system_prompt(agent: str, locale: str | None = None) -> str:
         "Cite sources at the end as URLs under 'Sources:'."
     )
     if agent == "knowledge":
+        # Language directive based on locale
+        # select language based on locale; default to English when unspecified
+        lang_hint = "English"
+        if locale and locale.lower().startswith("pt"):
+            lang_hint = "Brazilian Portuguese"
         return (
             base
             + " Answer strictly about InfinitePay products (Maquininha, Tap to Pay, PDV, Pix, Conta, Boleto, Link, Empréstimo, Cartão)."
             + " Prefer information grounded by the provided context and by graph facts (fees/features/how-to)."
-            + " If the context is insufficient, explicitly say you don't know and offer to escalate to human."
-            + " Output format: short answer first, then bullet points if needed, then 'Sources:' with up to 5 URLs."
+            + " If the context is insufficient, explicitly say you don't know. Do not escalate to human unless the user asks."
+            + " For 'fees' questions about the card, interpret fees to include 'annual fee (anuidade)', 'adhesion fee (taxa de adesão)', and 'service charges'. If the context states 'no annual fee', 'zero fees', or similar, answer clearly that it is free of those fees."
+            + " Always answer in "
+            + lang_hint
+            + ", do not mix languages."
+            + " Output format: short answer first, then bullet points if needed, then 'Sources:' with one most-relevant URL."
+            + " If you already include a 'Sources:' section, do not add another one."
         )
     if agent == "support":
         return (

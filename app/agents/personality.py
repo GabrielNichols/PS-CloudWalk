@@ -9,7 +9,14 @@ def _format_answer(answer: str, locale: str | None) -> str:
         prefix = "[pt-BR]"
     else:
         prefix = "[en]"
-    return f"{prefix} {answer}"
+    # Avoid double 'Sources:' duplication; ensure single section at the end
+    lines = answer.strip()
+    # Normalize extra Sources duplicate suffix occurring in some runs
+    # Keep the first 'Sources:' occurrence and drop subsequent duplicate headers
+    parts = lines.split("\nSources:")
+    if len(parts) > 2:
+        lines = parts[0] + "\nSources:" + parts[1]
+    return f"{prefix} {lines}"
 
 
 @traceable(name="Personality", metadata={"agent": "Personality", "tags": ["agent", "personality"]})

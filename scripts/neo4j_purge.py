@@ -1,5 +1,13 @@
+import os
+import sys
 from neo4j import GraphDatabase
-from app.settings import settings
+
+# Ensure project root is on sys.path when running as a script
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from app.settings import settings  # noqa: E402
 
 # Load from pydantic settings (.env)
 uri = settings.neo4j_uri or (

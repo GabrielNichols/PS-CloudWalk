@@ -24,8 +24,6 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
     answer = (
         "CustomerSupportAgent: I opened a support ticket and summarized your issue. "
         f"Ticket {ticket['id']} is now open. Our team will contact you shortly."
-        "\nIf you need product information while you wait, you can check InfinitePay help pages."
-        "\nSources: https://www.infinitepay.io/"
     )
     grounding = {
         "mode": "tools",
