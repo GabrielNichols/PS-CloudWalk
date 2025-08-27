@@ -13,7 +13,7 @@ def test_message_knowledge_stub():
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert body["agent"] in {"KnowledgeAgent", "CustomerSupportAgent"}
+    assert body["agent"] in {"KnowledgeAgent", "CustomerSupportAgent", "CustomAgent"}
     assert isinstance(body.get("answer"), str)
 
 

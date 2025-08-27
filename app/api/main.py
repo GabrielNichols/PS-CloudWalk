@@ -14,7 +14,10 @@ class MessagePayload(BaseModel):
 
 
 app = FastAPI()
-checkpointer = get_checkpointer()
+try:
+    checkpointer = get_checkpointer()
+except Exception:
+    checkpointer = None
 graph = build_graph(checkpointer=checkpointer)
 
 

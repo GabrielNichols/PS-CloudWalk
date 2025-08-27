@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import re
 from typing import Dict, Any
-from app.graph.helpers import sget, sdict
+
+
+def sget(state: dict, key: str, default=None):
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
+
+
+def sdict(state: dict) -> dict:
+    return state if isinstance(state, dict) else {}
 
 
 BLOCKED_PATTERNS = [

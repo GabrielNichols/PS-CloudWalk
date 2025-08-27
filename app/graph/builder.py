@@ -1,14 +1,14 @@
 from langgraph.graph import StateGraph, END
 from app.graph.state import AppState
 from app.agents.router import router_node, route_decision
-from app.agents.knowledge import knowledge_node, knowledge_next
+from app.agents.knowledge.knowledge_node import knowledge_node, knowledge_next
 from app.agents.support import support_node
 from app.agents.personality import personality_node
 from app.agents.custom import custom_node
 
 
 def build_graph(checkpointer=None):
-    g = StateGraph(AppState)
+    g = StateGraph(dict)  # Use dict instead of AppState to avoid Pydantic issues
     g.add_node("router", router_node)
     g.add_node("knowledge", knowledge_node)
     g.add_node("support", support_node)

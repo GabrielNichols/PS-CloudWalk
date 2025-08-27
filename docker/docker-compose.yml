@@ -13,12 +13,8 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_EMBED_MODEL=${OPENAI_EMBED_MODEL}
       - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - NEO4J_URI=${NEO4J_URI}
-      - NEO4J_USERNAME=${NEO4J_USERNAME}
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
-      - NEO4J_DATABASE=${NEO4J_DATABASE}
-      - AURA_INSTANCEID=${AURA_INSTANCEID}
-      - AURA_INSTANCENAME=${AURA_INSTANCENAME}
+      - ZILLIZ_CLOUD_URI=${ZILLIZ_CLOUD_URI}
+      - ZILLIZ_CLOUD_TOKEN=${ZILLIZ_CLOUD_TOKEN}
       - DATABASE_URL=${DATABASE_URL}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - LANGSMITH_TRACING=${LANGSMITH_TRACING}
@@ -40,35 +36,5 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    depends_on:
-      neo4j:
-        condition: service_healthy
-
-  neo4j:
-    image: neo4j:5.21.0-community
-    container_name: agent-swarm-neo4j
-    environment:
-      - NEO4J_AUTH=neo4j/test
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4JLABS_PLUGINS=["apoc"]
-      - NEO4J_server_config_strict__validation_enabled=false
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_import:/import
-      - neo4j_plugins:/plugins
-    healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p test 'RETURN 1;' || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-volumes:
-  neo4j_data:
-  neo4j_logs:
-  neo4j_import:
-  neo4j_plugins:
+# Using Zilliz Cloud (managed Milvus) - no local services needed
 

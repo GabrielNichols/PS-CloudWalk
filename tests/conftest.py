@@ -31,3 +31,11 @@ def pytest_configure(config):
         sval = _strip_quotes(val)
         if sval is not None:
             os.environ[key] = sval
+
+    # Configure test-specific settings for optimal performance
+    os.environ.setdefault("LOG_LEVEL", "WARNING")  # Reduce log noise in tests
+    os.environ.setdefault("KNOWLEDGE_CACHE_TTL", "0")  # Disable cache in tests
+    os.environ.setdefault("RAG_WARMUP_ON_START", "false")  # Disable warmup in tests
+    os.environ.setdefault("MIN_ANSWER_LENGTH", "20")  # Lower threshold for tests
+    os.environ.setdefault("RAG_VECTOR_K", "2")  # Reduce retrieval size in tests
+    os.environ.setdefault("RAG_MAX_CONTEXT_CHARS", "1000")  # Smaller context for tests

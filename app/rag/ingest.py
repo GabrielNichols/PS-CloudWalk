@@ -2,14 +2,12 @@ from langchain_community.document_loaders import AsyncHtmlLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from app.rag.embeddings import get_embeddings
-from app.rag.vectorstore import Neo4jVectorStore
-from app.rag.graph_kg import build_and_persist_kg
+from app.rag.vectorstore_milvus import MilvusVectorStore
 from app.settings import settings
 import os
 
 from trafilatura import fetch_url, extract
 import re
-from app.rag.graph_kg import persist_faqs
 
 
 URL_TAGS = {
@@ -85,7 +83,7 @@ def ingest(urls: list[str], batch_size: int = 80) -> None:
     )
     splits = splitter.split_documents(raw_docs)
 
-    # 3) Embeddings + Vector index on Neo4j
+    # 3) Embeddings + Vector index
     emb = get_embeddings()
     if emb:
         prepared = []
@@ -125,22 +123,21 @@ def ingest(urls: list[str], batch_size: int = 80) -> None:
                         ans = " ".join([ln for ln in answer_lines if ln]).strip()
                         q = re.sub(r"\s+", " ", qline)
                         if len(ans) > 10:
-                            faq_rows.append({
-                                "question": q[:512],
-                                "answer": ans[:1600],
-                                "url": url_val,
-                                "product": "Cartão Virtual Inteligente" if "/cartao" in url_val else None,
-                            })
+                            faq_rows.append(
+                                {
+                                    "question": q[:512],
+                                    "answer": ans[:1600],
+                                    "url": url_val,
+                                    "product": "Cartão Virtual Inteligente" if "/cartao" in url_val else "InfinitePay",
+                                }
+                            )
                         i = j
                         continue
                     i += 1
         # Index in batches to respect API/token limits
-        Neo4jVectorStore.index_in_batches(prepared, embedding=emb, batch_size=batch_size)
-        # 4) Build KG (entities/relations) with OpenAI and persist with MERGE (idempotent)
-        build_and_persist_kg(prepared, per_doc_limit=5, max_docs=200)
-        # 5) Persist extracted FAQs (graph) and index again as vector docs no FAQ index
+        MilvusVectorStore.index_in_batches(prepared, embedding=emb, batch_size=batch_size)
+        # 4) Index FAQ documents separately (Milvus only supports vector indexing)
         if faq_rows:
-            persist_faqs(faq_rows)
             faq_docs = [
                 Document(
                     page_content=f"Q: {row['question']}\nA: {row['answer']}",
@@ -148,7 +145,7 @@ def ingest(urls: list[str], batch_size: int = 80) -> None:
                 )
                 for row in faq_rows
             ]
-            Neo4jVectorStore.index_faqs_in_batches(faq_docs, embedding=emb, batch_size=64)
+            MilvusVectorStore.index_faqs_in_batches(faq_docs, embedding=emb, batch_size=64)
 
 
 if __name__ == "__main__":

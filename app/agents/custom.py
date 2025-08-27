@@ -1,5 +1,4 @@
 from typing import Dict, Any
-from app.graph.helpers import sget, sget_meta
 from app.settings import settings
 
 from langsmith import traceable
@@ -18,7 +17,7 @@ def send_slack_message(channel: str, text: str) -> Dict[str, Any]:
     try:
         ok = bool(data.get("ok"))  # type: ignore[call-arg]
     except Exception:
-        ok = True
+        ok = True  # type: ignore[assignment]
     return {"ok": ok, "ts": data.get("ts"), "channel": data.get("channel")}
 
 
@@ -26,14 +25,12 @@ def escalate_to_human(user_id: str, summary: str) -> Dict[str, Any]:
     return {"ok": True, "ticket_id": f"HUM-{user_id}", "summary": summary}
 
 
-@traceable(
-    name="CustomAgent", metadata={"agent": "CustomAgent", "tags": ["agent", "custom", "slack"]}
-)
+@traceable(name="CustomAgent", metadata={"agent": "CustomAgent", "tags": ["agent", "custom", "slack"]})
 def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    user_id = sget(state, "user_id", "unknown")
-    message = sget(state, "message", "")
+    user_id = (state.get("user_id") if isinstance(state, dict) else None) or "unknown"
+    message = (state.get("message") if isinstance(state, dict) else None) or ""
     meta = {"agent": "CustomAgent"}
-    base_meta = sget_meta(state)
+    base_meta: dict = {}
     try:
         conf = float((base_meta or {}).get("handoff_confidence") or 0.0)
     except Exception:

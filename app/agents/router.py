@@ -1,5 +1,4 @@
 from typing import Dict, Any
-from app.graph.helpers import sget
 
 from langsmith import traceable
 
@@ -51,8 +50,8 @@ def _detect_intent(message: str) -> str:
 @traceable(name="RouterAgent", metadata={"agent": "RouterAgent", "tags": ["agent", "router"]})
 def router_node(state: Dict[str, Any]) -> Dict[str, Any]:
     state = enforce(state)
-    message = sget(state, "message", "")
-    locale = sget(state, "locale")
+    message = (state.get("message") if isinstance(state, dict) else None) or ""
+    locale = state.get("locale") if isinstance(state, dict) else None
     if not locale and message:
         try:
             lang = detect(message)
@@ -60,12 +59,24 @@ def router_node(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception:  # noqa: BLE001
             locale = "en"
     intent = _detect_intent(message)
-    return {"intent": intent, "locale": locale}
+
+    # Preserve original state fields and add routing results
+    result = {
+        "intent": intent,
+        "locale": locale
+    }
+
+    # Preserve original fields from input state
+    for key in ["user_id", "message"]:
+        if key in state:
+            result[key] = state[key]
+
+    return result
 
 
 @traceable(name="RouterDecision", metadata={"agent": "RouterAgent", "tags": ["router", "decision"]})
 def route_decision(state: Dict[str, Any]) -> str:
-    intent = sget(state, "intent")
+    intent = state.get("intent") if isinstance(state, dict) else None
     if intent == "custom":
         return "custom"
     if intent == "support":
