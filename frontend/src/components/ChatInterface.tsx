@@ -1,8 +1,103 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, ExternalLink, Clock, Zap, Target, Trash2, Menu } from 'lucide-react';
+import { Send, Bot, User, ExternalLink, Clock, Zap, Target, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Message } from '../types';
 import Sidebar from './Sidebar';
+
+// Helper function to make incomplete markdown safe for rendering during streaming
+const makeMarkdownSafe = (content: string, isStreaming: boolean): string => {
+  if (!content) return '';
+  
+  // If not streaming, return content as-is
+  if (!isStreaming) return content;
+  
+  let safeContent = content;
+  
+  try {
+    // Fix incomplete bold formatting
+    const boldMatches = (safeContent.match(/\*\*/g) || []).length;
+    if (boldMatches % 2 !== 0) {
+      safeContent += '**';
+    }
+    
+    // Fix incomplete italic formatting (avoid conflict with bold)
+    const italicMatches = (safeContent.match(/(?<!\*)\*(?!\*)/g) || []).length;
+    if (italicMatches % 2 !== 0) {
+      safeContent += '*';
+    }
+    
+    // Fix incomplete code blocks
+    const codeBlockMatches = (safeContent.match(/```/g) || []).length;
+    if (codeBlockMatches % 2 !== 0) {
+      safeContent += '\n```';
+    }
+    
+    // Fix incomplete inline code (simpler approach)
+    const backtickCount = (safeContent.match(/`/g) || []).length;
+    if (backtickCount % 2 !== 0) {
+      safeContent += '`';
+    }
+    
+    // Fix incomplete headers that might break
+    if (safeContent.endsWith('#')) {
+      safeContent += ' ';
+    }
+    
+  } catch (error) {
+    console.warn('Error processing markdown:', error);
+    return content; // Return original if processing fails
+  }
+  
+  return safeContent;
+};
+
+// Custom component for streaming markdown that forces updates
+const StreamingMarkdown: React.FC<{ content: string; isStreaming: boolean }> = ({ content, isStreaming }) => {
+  const [renderKey, setRenderKey] = useState(0);
+  
+  // Force re-render every time content changes during streaming
+  useEffect(() => {
+    if (isStreaming) {
+      setRenderKey(prev => prev + 1);
+    }
+  }, [content, isStreaming]);
+  
+  return (
+    <ReactMarkdown
+      key={isStreaming ? `streaming-${renderKey}` : 'static'}
+      skipHtml={false}
+      components={{
+        p: ({ children }) => <p style={{ margin: '0 0 1em 0', minHeight: isStreaming ? '1.2em' : 'auto' }}>{children}</p>,
+        code: ({ children, className, ...props }: any) => {
+          const inline = props.inline || false;
+          return inline ? (
+            <code className={className} style={{ 
+              background: 'rgba(255,255,255,0.1)', 
+              padding: '2px 4px', 
+              borderRadius: '3px' 
+            }}>
+              {children}
+            </code>
+          ) : (
+            <pre style={{ 
+              background: 'rgba(255,255,255,0.1)', 
+              padding: '12px', 
+              borderRadius: '6px',
+              overflow: 'auto'
+            }}>
+              <code className={className}>{children}</code>
+            </pre>
+          );
+        },
+        ul: ({ children }) => <ul style={{ margin: '0 0 1em 0', paddingLeft: '1.5em' }}>{children}</ul>,
+        ol: ({ children }) => <ol style={{ margin: '0 0 1em 0', paddingLeft: '1.5em' }}>{children}</ol>,
+        li: ({ children }) => <li style={{ margin: '0.25em 0' }}>{children}</li>,
+      }}
+    >
+      {makeMarkdownSafe(content, isStreaming)}
+    </ReactMarkdown>
+  );
+};
 
 interface ChatInterfaceProps {
   messages: Message[];
@@ -13,21 +108,16 @@ interface ChatInterfaceProps {
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, onClearChat, isLoading }) => {
   const [input, setInput] = useState('');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [openDebugIds, setOpenDebugIds] = useState<Record<string, boolean>>({});
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const toggleSidebar = () => {
-    setSidebarCollapsed(!sidebarCollapsed);
-  };
-
   const handleNewChat = () => {
     onClearChat();
-    setSidebarCollapsed(true);
   };
 
   useEffect(() => {
@@ -40,23 +130,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
     }
   }, [isLoading]);
 
-  // Close sidebar on mobile when clicking outside
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth >= 768) {
-        setSidebarCollapsed(true);
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (input.trim() && !isLoading) {
       onSendMessage(input.trim());
       setInput('');
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
     }
   };
 
@@ -64,30 +149,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
     if (!metadata) return null;
 
     return (
-      <div className="flex flex-wrap gap-2 mt-3 text-xs text-gray-400">
+      <div className="meta-badges">
         {metadata.agent && (
-          <span className="flex items-center gap-1 px-2 py-1 bg-gray-700 rounded">
-            <Bot className="w-3 h-3" />
-            {metadata.agent}
+          <span className="badge">
+            <Bot size={12} />
+            <span>{metadata.agent}</span>
           </span>
         )}
-        {metadata.confidence && (
-          <span className="flex items-center gap-1 px-2 py-1 bg-gray-700 rounded">
-            <Target className="w-3 h-3" />
-            {Math.round(metadata.confidence * 100)}%
+        {typeof metadata.confidence === 'number' && (
+          <span className="badge">
+            <Target size={12} />
+            <span>{Math.round(metadata.confidence * 100)}%</span>
           </span>
         )}
         {metadata.latency_ms && (
-          <span className="flex items-center gap-1 px-2 py-1 bg-gray-700 rounded">
-            <Zap className="w-3 h-3" />
-            {metadata.latency_ms}ms
+          <span className="badge">
+            <Zap size={12} />
+            <span>{metadata.latency_ms}ms</span>
           </span>
         )}
-        {metadata.mode && (
-          <span className="px-2 py-1 bg-gray-700 rounded">
-            {metadata.mode}
-          </span>
-        )}
+        {metadata.mode && <span className="badge plain">{metadata.mode}</span>}
       </div>
     );
   };
@@ -96,22 +177,59 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
     if (!sources || sources.length === 0) return null;
 
     return (
-      <div className="mt-4 p-3 bg-gray-800 rounded-lg border-l-4 border-blue-500">
-        <h4 className="text-sm font-semibold text-blue-400 mb-2">Sources:</h4>
-        <div className="space-y-1">
+      <div className="message-sources">
+        <h4 className="sources-title">Sources:</h4>
+        <div>
           {sources.map((source, index) => (
-            <a
-              key={index}
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 transition-colors"
-            >
-              <ExternalLink className="w-3 h-3" />
+            <a key={index} href={source.url} target="_blank" rel="noopener noreferrer" className="source-link">
+              <ExternalLink size={12} />
               {source.title || source.url}
             </a>
           ))}
         </div>
+      </div>
+    );
+  };
+
+  const renderDebug = (message: Message) => {
+    const hasDebug = message.metadata?.steps || message.metadata?.retrieval || message.metadata?.tokens;
+    if (!hasDebug) return null;
+
+    const isOpen = !!openDebugIds[message.id];
+    const toggle = () => setOpenDebugIds((m) => ({ ...m, [message.id]: !isOpen }));
+
+    return (
+      <div className="debug-panel">
+        <button className="debug-toggle" onClick={toggle} aria-expanded={isOpen}>
+          <ChevronDown size={14} className={`chevron ${isOpen ? 'open' : ''}`} />
+          Details
+        </button>
+        {isOpen && (
+          <div className="debug-content">
+            {message.metadata?.steps && (
+              <div className="debug-section">
+                <div className="debug-title">Reasoning/Steps</div>
+                <ol>
+                  {(message.metadata.steps as string[]).map((s, i) => (
+                    <li key={i}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {message.metadata?.retrieval && (
+              <div className="debug-section">
+                <div className="debug-title">Retrieval</div>
+                <pre>{JSON.stringify(message.metadata.retrieval, null, 2)}</pre>
+              </div>
+            )}
+            {typeof message.metadata?.tokens === 'number' && (
+              <div className="debug-section">
+                <div className="debug-title">Token usage</div>
+                <div>{message.metadata.tokens}</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -123,85 +241,61 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
         messages={messages}
         onNewChat={handleNewChat}
         onClearChat={onClearChat}
-        isCollapsed={sidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
       />
-
       {/* Main Chat Area */}
       <div className="chat-main">
-
-        {/* Header */}
-        <div className="chat-header">
-          <div className="header-content">
-            <button
-              onClick={toggleSidebar}
-              className="md:hidden p-2 text-gray-400 hover:text-white rounded-lg transition-colors"
-              title="Open sidebar"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-
-            <Bot className="w-8 h-8 text-blue-500" />
-            <div>
-              <h1 className="header-title">InfinitePay Assistant</h1>
-              <p className="header-subtitle">AI-Powered Customer Support</p>
-            </div>
-          </div>
+        {/* Top bar (minimal, ChatGPT-like) */}
+        <div className="topbar">
+          <div className="topbar-title">InfinitePay Assistant</div>
         </div>
 
-        {/* Messages */}
-        <div className="messages-container">
+        {/* Thread */}
+        <div className="thread">
+          <div className={`thread-inner ${messages.length === 0 ? 'empty' : ''}`}>
           {messages.length === 0 && (
             <div className="empty-state">
-              <Bot className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+              <div className="empty-logo"><Bot size={56} /></div>
               <h3 className="empty-title">Welcome to InfinitePay Assistant</h3>
               <p className="empty-subtitle">Ask me anything about our products and services!</p>
             </div>
           )}
 
           {messages.map((message) => (
-            <div key={message.id} className={`message ${message.role}`}>
-              {message.role === 'assistant' && (
-                <div className="message-avatar">
-                  <Bot className="w-5 h-5" />
-                </div>
-              )}
-
-              <div className="message-content">
+            <div key={message.id} className={`msg ${message.role}`}>
+              <div className="avatar">
+                {message.role === 'assistant' ? 'AI' : 'You'}
+              </div>
+              <div className="bubble">
                 <div className="markdown-content">
-                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                  <StreamingMarkdown 
+                    content={message.content || ''} 
+                    isStreaming={message.isStreaming || false} 
+                  />
+                  {message.isStreaming && (
+                    <span className="streaming-cursor">|</span>
+                  )}
                 </div>
-
                 {message.role === 'assistant' && (
                   <>
                     {formatMetadata(message.metadata)}
                     {formatSources(message.sources || [])}
+                    {renderDebug(message)}
                   </>
                 )}
-
-                <div className="message-meta">
+                <div className="time">
                   <Clock className="w-3 h-3" />
                   {message.timestamp instanceof Date
                     ? message.timestamp.toLocaleTimeString()
-                    : new Date(message.timestamp || Date.now()).toLocaleTimeString()
-                  }
+                    : new Date(message.timestamp || Date.now()).toLocaleTimeString()}
                 </div>
               </div>
-
-              {message.role === 'user' && (
-                <div className="message-avatar">
-                  <User className="w-5 h-5" />
-                </div>
-              )}
             </div>
           ))}
 
-          {isLoading && (
-            <div className="typing-indicator">
-              <div className="message-avatar">
-                <Bot className="w-5 h-5" />
-              </div>
-              <div className="typing-content">
+          {isLoading && !messages.some(m => m.isStreaming) && (
+            <div className="msg assistant">
+              <div className="avatar">AI</div>
+              <div className="bubble">
                 <div className="typing-dots">
                   <div className="typing-dot"></div>
                   <div className="typing-dot"></div>
@@ -212,28 +306,32 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
           )}
 
           <div ref={messagesEndRef} />
+          </div>
         </div>
 
-        {/* Input */}
-        <div className="input-container">
-          <form onSubmit={handleSubmit} className="input-form">
-            <input
+        {/* Composer */}
+        <div className="composer">
+          <form onSubmit={handleSubmit} className="composer-inner">
+            <textarea
               ref={inputRef}
-              type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask me anything about InfinitePay..."
-              className="input-field"
+              onKeyDown={handleKeyDown}
+              placeholder="Ask anything about InfinitePay..."
+              className="composer-input"
+              rows={1}
               disabled={isLoading}
             />
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
-              className="send-button"
+              className="composer-send"
+              aria-label="Send"
             >
-              <Send className="w-5 h-5" />
+              <Send size={16} />
             </button>
           </form>
+          <div className="composer-hint">Press Enter to send • Shift+Enter to break line</div>
         </div>
       </div>
     </div>

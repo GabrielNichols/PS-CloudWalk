@@ -7,6 +7,9 @@ from app.settings import settings
 import time
 import json
 import asyncio
+from typing import Any, Dict, List
+from fastapi.middleware.cors import CORSMiddleware
+from app import db as dbmod
 
 
 class MessagePayload(BaseModel):
@@ -16,6 +19,14 @@ class MessagePayload(BaseModel):
 
 
 app = FastAPI()
+# CORS (useful for local dev: CRA on :3000 calling API on :8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*" if settings.app_env != "production" else "https://*"] ,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 try:
     checkpointer = get_checkpointer()
 except Exception:
@@ -24,6 +35,21 @@ graph = build_graph(checkpointer=checkpointer)
 
 
 _rate_limiter_store: dict[str, list[float]] = {}
+
+# Simple in-memory conversation store (dev fallback).
+# For production, persist via Supabase/Postgres.
+_conversations: Dict[str, List[Dict[str, Any]]] = {}
+
+
+@app.on_event("startup")
+async def on_startup():
+    # Initialize DB schema if DATABASE_URL present
+    if settings.database_url:
+        try:
+            await dbmod.init_db()
+        except Exception:
+            # Non-fatal in dev; will fallback to in-memory
+            pass
 
 
 def _allow_request(user_id: str) -> bool:
@@ -67,10 +93,28 @@ async def message_endpoint(payload: MessagePayload, request: Request):
         user_key = payload.user_id or client_host
         if not _allow_request(user_key):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        # Persist user message first (best-effort)
+        try:
+            user_msg = {
+                "id": f"msg_{int(time.time()*1000)}_u",
+                "session_id": payload.user_id or client_host,
+                "content": payload.message,
+                "role": "user",
+                "timestamp": int(time.time() * 1000),
+                "sources": [],
+                "metadata": {"agent": "user"},
+            }
+            if settings.database_url:
+                await dbmod.save_message(user_msg)
+            else:
+                _conversations.setdefault(user_msg["session_id"], []).append({k: v for k, v in user_msg.items() if k != "session_id"})
+        except Exception:
+            pass
         inputs = {
             "user_id": payload.user_id,
             "message": payload.message,
-            "locale": payload.locale,
+            "locale": payload.locale or "pt-BR",
         }
         result = graph.invoke(
             inputs,
@@ -91,6 +135,31 @@ async def message_endpoint(payload: MessagePayload, request: Request):
             except Exception:
                 data = {"answer": str(result)}
         # Personality node must set `answer` and `agent`
+    # Save assistant message to conversation store (best-effort)
+        try:
+            session_id = payload.user_id
+            msg = {
+                "id": f"msg_{int(time.time()*1000)}",
+                "session_id": session_id,
+                "content": data.get("answer", ""),
+                "role": "assistant",
+                "timestamp": int(time.time() * 1000),
+                "sources": (data.get("grounding") or {}).get("sources") or [],
+                "metadata": {
+                    "agent": data.get("agent", "Unknown"),
+                    **(data.get("meta") or {}),
+                },
+            }
+            if settings.database_url:
+                try:
+                    await dbmod.save_message(msg)
+                except Exception:
+                    pass
+            else:
+                _conversations.setdefault(session_id, []).append({k: v for k, v in msg.items() if k != "session_id"})
+        except Exception:
+            pass
+
         return {
             "ok": True,
             "agent": data.get("agent", "Unknown"),
@@ -115,8 +184,26 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
         inputs = {
             "user_id": payload.user_id,
             "message": payload.message,
-            "locale": payload.locale,
+            "locale": payload.locale or "pt-BR",
         }
+
+        # Persist user message first (best-effort)
+        try:
+            user_msg = {
+                "id": f"msg_{int(time.time()*1000)}_u",
+                "session_id": payload.user_id or client_host,
+                "content": payload.message,
+                "role": "user",
+                "timestamp": int(time.time() * 1000),
+                "sources": [],
+                "metadata": {"agent": "user"},
+            }
+            if settings.database_url:
+                await dbmod.save_message(user_msg)
+            else:
+                _conversations.setdefault(user_msg["session_id"], []).append({k: v for k, v in user_msg.items() if k != "session_id"})
+        except Exception:
+            pass
 
         # Get the full response first (we'll stream it in chunks)
         result = graph.invoke(
@@ -169,6 +256,28 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
         }
         yield f"data: {json.dumps(completion_data)}\n\n"
 
+        # Persist assistant message (best-effort)
+        try:
+            session_id = payload.user_id or client_host
+            msg = {
+                "id": f"msg_{int(time.time()*1000)}",
+                "session_id": session_id,
+                "content": answer,
+                "role": "assistant",
+                "timestamp": int(time.time() * 1000),
+                "sources": (data.get("grounding") or {}).get("sources") or [],
+                "metadata": {
+                    "agent": data.get("agent", "Unknown"),
+                    **(data.get("meta") or {}),
+                },
+            }
+            if settings.database_url:
+                await dbmod.save_message(msg)
+            else:
+                _conversations.setdefault(session_id, []).append({k: v for k, v in msg.items() if k != "session_id"})
+        except Exception:
+            pass
+
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
@@ -186,3 +295,67 @@ async def message_stream_endpoint(payload: MessagePayload, request: Request):
             "Access-Control-Allow-Headers": "cache-control",
         }
     )
+
+
+# -------- Conversation/session endpoints (dev fallback) --------
+class ConversationSavePayload(BaseModel):
+    session_id: str
+    messages: List[Dict[str, Any]]
+
+
+@app.get("/api/v1/conversation/{session_id}")
+async def get_conversation(session_id: str):
+    if settings.database_url:
+        try:
+            rows = await dbmod.get_conversation(session_id)
+            # Rows have session_id; frontend ignores it per-message, ok
+            return {"session_id": session_id, "messages": rows}
+        except Exception:
+            pass
+    messages = _conversations.get(session_id, [])
+    return {"session_id": session_id, "messages": messages}
+
+
+@app.post("/api/v1/conversation")
+async def save_conversation(payload: ConversationSavePayload):
+    if settings.database_url:
+        try:
+            await dbmod.replace_conversation(payload.session_id, payload.messages or [])
+            return {"ok": True}
+        except Exception:
+            pass
+    _conversations[payload.session_id] = payload.messages or []
+    return {"ok": True}
+
+
+@app.delete("/api/v1/conversation/{session_id}")
+async def delete_conversation(session_id: str):
+    if settings.database_url:
+        try:
+            await dbmod.delete_conversation(session_id)
+            return {"ok": True}
+        except Exception:
+            pass
+    _conversations.pop(session_id, None)
+    return {"ok": True}
+
+
+@app.get("/api/v1/sessions")
+async def list_sessions():
+    if settings.database_url:
+        try:
+            return await dbmod.list_sessions()
+        except Exception:
+            pass
+    sessions = []
+    for sid, msgs in _conversations.items():
+        last = msgs[-1] if msgs else None
+        sessions.append({
+            "id": sid,
+            "title": (msgs[0]["content"][:30] + "...") if msgs else "New Chat",
+            "lastMessage": (last or {}).get("content", ""),
+            "timestamp": (last or {}).get("timestamp", int(time.time() * 1000)),
+            "messageCount": len(msgs),
+        })
+    sessions.sort(key=lambda s: s["timestamp"], reverse=True)
+    return sessions

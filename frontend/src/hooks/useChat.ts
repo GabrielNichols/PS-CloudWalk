@@ -35,21 +35,7 @@ export const useChat = () => {
     loadConversation();
   }, []);
 
-  // Save messages to backend whenever they change
-  useEffect(() => {
-    if (state.messages.length > 0) {
-      // Debounce saves to avoid too many API calls
-      const saveTimer = setTimeout(async () => {
-        try {
-          await sessionApi.saveConversation(state.messages);
-        } catch (error) {
-          console.warn('Failed to save conversation to backend:', error);
-        }
-      }, 1000); // Wait 1 second after last change
-
-      return () => clearTimeout(saveTimer);
-    }
-  }, [state.messages]);
+  // Frontend no longer posts full conversation automatically; backend already persists per-message.
 
   const sendMessage = useCallback(async (content: string) => {
     const sessionId = state.currentSessionId || getSessionId();
@@ -70,49 +56,43 @@ export const useChat = () => {
     }));
 
     try {
-      // Try streaming first
+      // Try streaming first with a single placeholder message
       let streamingSupported = true;
-      let streamingMessageId: string | null = null;
+      const placeholderId = `assistant_${Date.now()}`;
+
+      // Create placeholder assistant message once
+      setState(prev => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            id: placeholderId,
+            content: '',
+            role: 'assistant',
+            timestamp: new Date(),
+            isStreaming: true,
+          } as Message,
+        ],
+      }));
 
       try {
         await chatApi.sendMessageStreaming(
           content,
           sessionId,
           (chunk, isComplete) => {
-            // Handle streaming chunks
-            setState(prev => {
-              const messages = [...prev.messages];
-              let lastMessage = messages[messages.length - 1];
-
-              if (lastMessage?.role === 'assistant' && lastMessage.isStreaming) {
-                // Update existing streaming message
-                lastMessage.content += chunk;
-                if (isComplete) {
-                  lastMessage.isStreaming = false;
-                }
-              } else {
-                // Create new streaming message
-                const newMessage: Message = {
-                  id: `assistant_${Date.now()}`,
-                  content: chunk,
-                  role: 'assistant',
-                  timestamp: new Date(),
-                  isStreaming: !isComplete,
-                };
-                messages.push(newMessage);
-                streamingMessageId = newMessage.id;
-              }
-
-              return { ...prev, messages };
-            });
-          },
-          (fullMessage) => {
-            // Streaming completed successfully
             setState(prev => ({
               ...prev,
-              messages: prev.messages.map(msg =>
-                msg.id === streamingMessageId ? { ...fullMessage, isStreaming: false } : msg
+              messages: prev.messages.map(m =>
+                m.id === placeholderId
+                  ? { ...m, content: (m.content || '') + chunk, isStreaming: !isComplete }
+                  : m
               ),
+            }));
+          },
+          (fullMessage) => {
+            setState(prev => ({
+              ...prev,
+              messages: prev.messages.map(m => (m.id === placeholderId ? { ...fullMessage, id: placeholderId, isStreaming: false } : m)),
               isLoading: false,
             }));
           },
@@ -125,13 +105,11 @@ export const useChat = () => {
         streamingSupported = false;
       }
 
-      // Fallback to regular API if streaming fails
       if (!streamingSupported) {
         const assistantMessage = await chatApi.sendMessage(content, sessionId);
-
         setState(prev => ({
           ...prev,
-          messages: [...prev.messages, assistantMessage],
+          messages: prev.messages.map(m => (m.id === placeholderId ? assistantMessage : m)),
           isLoading: false,
         }));
       }

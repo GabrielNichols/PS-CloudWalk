@@ -13,6 +13,8 @@ export interface Message {
     latency_ms?: number;
     tokens?: number;
     mode?: string;
+  steps?: string[];
+  retrieval?: any;
   };
   isStreaming?: boolean;
 }
