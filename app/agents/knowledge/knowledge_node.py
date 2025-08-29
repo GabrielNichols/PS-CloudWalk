@@ -17,6 +17,7 @@ from langsmith.wrappers import wrap_openai
 from app.settings import settings
 from app.tools.web_search import web_search
 from app.graph.guardrails import enforce
+from app.graph.memory import get_user_context_prompt
 from app.agents.knowledge.cache_manager import get_cache_manager
 from app.agents.knowledge.retrieval_orchestrator import get_orchestrator
 from app.agents.knowledge.context_builder import get_context_builder
@@ -31,20 +32,42 @@ _context_builder = get_context_builder()
 _profiler = get_profiler()
 
 
-def _get_system_prompt(locale: str | None) -> str:
-    """Build system prompt with locale support."""
+def _get_system_prompt(locale: str | None, user_id: str = None) -> str:
+    """Build system prompt with locale and user context support."""
+    # Determine language instruction based on locale
+    if (locale or "").lower().startswith("pt"):
+        language_instruction = (
+            "Always answer in Portuguese (pt-BR), maintain consistent Portuguese throughout the response. "
+            "Use Brazilian Portuguese spelling and expressions."
+        )
+        locale_prefix = "[pt-BR]"
+    else:
+        language_instruction = (
+            "Always answer in English, do not mix languages."
+        )
+        locale_prefix = "[en]"
+
     policy = (
         "Follow policy: do not request or output secrets/PII; avoid politics, violence, or hate; "
         "if insufficient context, say you don't know and suggest contacting human support. "
         "Cite sources at the end as URLs under 'Sources:'. Answer strictly about InfinitePay products "
         "(Maquininha, Tap to Pay, PDV, Pix, Conta, Boleto, Link, Empréstimo, Cartão). Prefer information "
         "grounded by the provided context. If the context is insufficient, explicitly say you don't know. "
-        "Always answer in English, do not mix languages. Output format: short answer first, then bullet points if needed, "
+        f"{language_instruction} Output format: short answer first, then bullet points if needed, "
         "then 'Sources:' with one most-relevant URL. If you already include a 'Sources:' section, do not add another one."
     )
-    if (locale or "").lower().startswith("pt"):
-        policy = "[pt-BR] " + policy
-    return policy
+
+    # Add user context if available
+    if user_id:
+        try:
+            context_prompt = get_user_context_prompt(user_id)
+            if context_prompt:
+                policy = context_prompt + " " + policy
+        except Exception:
+            # Fail gracefully if context retrieval fails
+            pass
+
+    return f"{locale_prefix} {policy}"
 
 
 def _build_llm_client() -> Optional[OpenAI]:
@@ -215,7 +238,7 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     "meta": {**meta, "error": "no_llm_client"},
                 }
 
-            sys_prompt = _get_system_prompt(state.get("locale"))
+            sys_prompt = _get_system_prompt(state.get("locale"), state.get("user_id"))
             prompt = f"{sys_prompt}\n\nQuestion: {question}\n\nContext:\n{combined_context}"
 
             # Check LLM cache

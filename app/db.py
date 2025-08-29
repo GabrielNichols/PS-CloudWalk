@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 
 import asyncpg
@@ -45,8 +46,42 @@ async def init_db():
 
 
 async def save_message(msg: Dict[str, Any]) -> None:
+    """Save a message with deduplication and validation"""
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Ensure sources and metadata are JSON serializable
+        sources = msg.get("sources", [])
+        if not isinstance(sources, (list, dict)):
+            sources = []
+
+        metadata = msg.get("metadata", {})
+        if not isinstance(metadata, (dict, list)):
+            metadata = {}
+
+        # Generate a content hash to detect duplicates
+        content_hash = hash(f"{msg.get('session_id')}_{msg.get('content')}_{msg.get('role')}")
+
+        # Check for existing message with same content in last 30 seconds (to avoid rapid duplicates)
+        thirty_seconds_ago = int(msg.get("timestamp", 0)) - 30000
+
+        existing = await conn.fetchval("""
+            SELECT id FROM messages
+            WHERE session_id = $1
+            AND content = $2
+            AND role = $3
+            AND timestamp > $4
+            AND timestamp <= $5
+        """,
+        msg.get("session_id"),
+        msg.get("content"),
+        msg.get("role"),
+        thirty_seconds_ago,
+        int(msg.get("timestamp", 0)) + 1000  # Allow 1 second tolerance
+        )
+
+        if existing:
+            return
+
         await conn.execute(
             """
             INSERT INTO messages (id, session_id, role, content, timestamp, sources, metadata)
@@ -64,8 +99,8 @@ async def save_message(msg: Dict[str, Any]) -> None:
             msg.get("role"),
             msg.get("content"),
             int(msg.get("timestamp")),
-            msg.get("sources"),
-            msg.get("metadata"),
+            json.dumps(sources) if sources else '[]',
+            json.dumps(metadata) if metadata else '{}',
         )
 
 
@@ -75,23 +110,33 @@ async def replace_conversation(session_id: str, messages: List[Dict[str, Any]]) 
         async with conn.transaction():
             await conn.execute("DELETE FROM messages WHERE session_id = $1", session_id)
             if messages:
+                # Prepare data with JSON serializable fields
+                prepared_messages = []
+                for m in messages:
+                    sources = m.get("sources", [])
+                    if not isinstance(sources, (list, dict)):
+                        sources = []
+
+                    metadata = m.get("metadata", {})
+                    if not isinstance(metadata, (dict, list)):
+                        metadata = {}
+
+                    prepared_messages.append((
+                        m.get("id"),
+                        session_id,
+                        m.get("role"),
+                        m.get("content"),
+                        int(m.get("timestamp")),
+                        json.dumps(sources) if sources else '[]',
+                        json.dumps(metadata) if metadata else '{}',
+                    ))
+
                 await conn.executemany(
                     """
                     INSERT INTO messages (id, session_id, role, content, timestamp, sources, metadata)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
-                    [
-                        (
-                            m.get("id"),
-                            session_id,
-                            m.get("role"),
-                            m.get("content"),
-                            int(m.get("timestamp")),
-                            m.get("sources"),
-                            m.get("metadata"),
-                        )
-                        for m in messages
-                    ],
+                    prepared_messages,
                 )
 
 

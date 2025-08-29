@@ -40,7 +40,7 @@ export const useChat = () => {
   const sendMessage = useCallback(async (content: string) => {
     const sessionId = state.currentSessionId || getSessionId();
 
-    // Add user message
+    // Add user message to UI immediately
     const userMessage: Message = {
       id: `user_${Date.now()}`,
       content,
@@ -48,78 +48,78 @@ export const useChat = () => {
       timestamp: new Date(),
     };
 
+    // Create placeholder assistant message
+    const placeholderId = `assistant_${Date.now()}`;
+    const placeholderMessage: Message = {
+      id: placeholderId,
+      content: '',
+      role: 'assistant',
+      timestamp: new Date(),
+      isStreaming: true,
+    };
+
     setState(prev => ({
       ...prev,
-      messages: [...prev.messages, userMessage],
+      messages: [...prev.messages, userMessage, placeholderMessage],
       isLoading: true,
       currentSessionId: sessionId,
     }));
 
     try {
-      // Try streaming first with a single placeholder message
-      let streamingSupported = true;
-      const placeholderId = `assistant_${Date.now()}`;
-
-      // Create placeholder assistant message once
-      setState(prev => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          {
+      // Use streaming API exclusively to avoid duplication
+      await chatApi.sendMessageStreaming(
+        content,
+        sessionId,
+        (chunk, isComplete) => {
+          // Update streaming content
+          setState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === placeholderId
+                ? { ...m, content: (m.content || '') + chunk, isStreaming: !isComplete }
+                : m
+            ),
+          }));
+        },
+        (fullMessage) => {
+          // Replace placeholder with final message
+          setState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === placeholderId
+                ? { ...fullMessage, id: placeholderId, isStreaming: false }
+                : m
+            ),
+            isLoading: false,
+          }));
+        },
+        (error) => {
+          console.error('Streaming failed:', error);
+          // Replace placeholder with error message
+          const errorMessage: Message = {
             id: placeholderId,
-            content: '',
+            content: 'Sorry, I encountered an error. Please try again.',
             role: 'assistant',
             timestamp: new Date(),
-            isStreaming: true,
-          } as Message,
-        ],
-      }));
+            metadata: { agent: 'Error' },
+          };
 
-      try {
-        await chatApi.sendMessageStreaming(
-          content,
-          sessionId,
-          (chunk, isComplete) => {
-            setState(prev => ({
-              ...prev,
-              messages: prev.messages.map(m =>
-                m.id === placeholderId
-                  ? { ...m, content: (m.content || '') + chunk, isStreaming: !isComplete }
-                  : m
-              ),
-            }));
-          },
-          (fullMessage) => {
-            setState(prev => ({
-              ...prev,
-              messages: prev.messages.map(m => (m.id === placeholderId ? { ...fullMessage, id: placeholderId, isStreaming: false } : m)),
-              isLoading: false,
-            }));
-          },
-          (error) => {
-            console.warn('Streaming failed, falling back to regular API:', error);
-            streamingSupported = false;
-          }
-        );
-      } catch (streamingError) {
-        streamingSupported = false;
-      }
-
-      if (!streamingSupported) {
-        const assistantMessage = await chatApi.sendMessage(content, sessionId);
-        setState(prev => ({
-          ...prev,
-          messages: prev.messages.map(m => (m.id === placeholderId ? assistantMessage : m)),
-          isLoading: false,
-        }));
-      }
+          setState(prev => ({
+            ...prev,
+            messages: prev.messages.map(m =>
+              m.id === placeholderId ? errorMessage : m
+            ),
+            isLoading: false,
+          }));
+        }
+      );
 
     } catch (error) {
       console.error('Failed to send message:', error);
 
-      // Add error message
+      // Replace placeholder with error message
       const errorMessage: Message = {
-        id: `error_${Date.now()}`,
+        id: placeholderId,
         content: 'Sorry, I encountered an error. Please try again.',
         role: 'assistant',
         timestamp: new Date(),
@@ -128,11 +128,42 @@ export const useChat = () => {
 
       setState(prev => ({
         ...prev,
-        messages: [...prev.messages, errorMessage],
+        messages: prev.messages.map(m =>
+          m.id === placeholderId ? errorMessage : m
+        ),
         isLoading: false,
       }));
     }
   }, [state.currentSessionId]);
+
+  const loadConversation = useCallback(async (sessionId: string) => {
+    try {
+      setState(prev => ({
+        ...prev,
+        isLoading: true,
+        messages: [], // Clear current messages while loading
+        currentSessionId: sessionId,
+      }));
+
+      // Load conversation history from backend
+      const conversationHistory = await sessionApi.getConversationHistoryBy(sessionId);
+
+      setState(prev => ({
+        ...prev,
+        messages: conversationHistory,
+        isLoading: false,
+        currentSessionId: sessionId,
+      }));
+
+      console.log(`Loaded conversation with ${conversationHistory.length} messages for session ${sessionId}`);
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+      }));
+    }
+  }, []);
 
   const clearChat = useCallback(async () => {
     try {
@@ -156,6 +187,7 @@ export const useChat = () => {
     messages: state.messages,
     isLoading: state.isLoading,
     sendMessage,
+    loadConversation,
     clearChat,
   };
 };

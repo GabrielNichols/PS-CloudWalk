@@ -2,7 +2,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from app.graph.builder import build_graph
-from app.graph.memory import get_checkpointer
+from app.graph.memory import (
+    get_langgraph_checkpointer,
+    update_user_context,
+    get_user_context_prompt
+)
 from app.settings import settings
 import time
 import json
@@ -27,11 +31,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
-try:
-    checkpointer = get_checkpointer()
-except Exception:
-    checkpointer = None
-graph = build_graph(checkpointer=checkpointer)
+# Initialize the async checkpointer
+checkpointer = None
+graph = None
+
+@app.on_event("startup")
+async def initialize_checkpointer():
+    global checkpointer, graph
+    try:
+        checkpointer = get_langgraph_checkpointer()
+        graph = build_graph(checkpointer=checkpointer)
+    except Exception:
+        # Fallback to in-memory
+        from langgraph.checkpoint.memory import MemorySaver
+        checkpointer = MemorySaver()
+        graph = build_graph(checkpointer=checkpointer)
 
 
 _rate_limiter_store: dict[str, list[float]] = {}
@@ -41,15 +55,7 @@ _rate_limiter_store: dict[str, list[float]] = {}
 _conversations: Dict[str, List[Dict[str, Any]]] = {}
 
 
-@app.on_event("startup")
-async def on_startup():
-    # Initialize DB schema if DATABASE_URL present
-    if settings.database_url:
-        try:
-            await dbmod.init_db()
-        except Exception:
-            # Non-fatal in dev; will fallback to in-memory
-            pass
+# Database initialization is now handled by the checkpointer setup
 
 
 def _allow_request(user_id: str) -> bool:
@@ -87,6 +93,12 @@ async def add_process_time_header(request: Request, call_next):
 
 @app.post("/api/v1/message")
 async def message_endpoint(payload: MessagePayload, request: Request):
+    global graph, checkpointer
+
+    # Ensure graph is initialized
+    if graph is None:
+        raise HTTPException(status_code=503, detail="Service initializing, please try again")
+
     try:
         # basic per-user rate limiting
         client_host = request.client.host if request.client is not None else "anonymous"
@@ -134,14 +146,29 @@ async def message_endpoint(payload: MessagePayload, request: Request):
                 data = dict(result)
             except Exception:
                 data = {"answer": str(result)}
+
         # Personality node must set `answer` and `agent`
-    # Save assistant message to conversation store (best-effort)
+        # Save assistant message to conversation store (best-effort)
         try:
             session_id = payload.user_id
+            assistant_answer = data.get("answer", "")
+            agent_used = data.get("agent", "Unknown")
+
+            # Update user contextual memory
+            try:
+                update_user_context(
+                    user_id=session_id,
+                    message=payload.message,
+                    agent=agent_used,
+                    response=assistant_answer
+                )
+            except Exception as e:
+                print(f"Warning: Failed to update user context: {e}")
+
             msg = {
                 "id": f"msg_{int(time.time()*1000)}",
                 "session_id": session_id,
-                "content": data.get("answer", ""),
+                "content": assistant_answer,
                 "role": "assistant",
                 "timestamp": int(time.time() * 1000),
                 "sources": (data.get("grounding") or {}).get("sources") or [],
@@ -153,12 +180,13 @@ async def message_endpoint(payload: MessagePayload, request: Request):
             if settings.database_url:
                 try:
                     await dbmod.save_message(msg)
-                except Exception:
-                    pass
+
+                except Exception as e:
+                    print(f"Error saving message or updating context: {e}")
             else:
                 _conversations.setdefault(session_id, []).append({k: v for k, v in msg.items() if k != "session_id"})
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error in message persistence: {e}")
 
         return {
             "ok": True,
@@ -173,6 +201,13 @@ async def message_endpoint(payload: MessagePayload, request: Request):
 
 async def generate_streaming_response(payload: MessagePayload, request: Request):
     """Generate streaming response using Server-Sent Events"""
+    global graph, checkpointer
+
+    # Ensure graph is initialized
+    if graph is None:
+        yield f"data: {json.dumps({'error': 'Service initializing, please try again'})}\n\n"
+        return
+
     try:
         # basic per-user rate limiting
         client_host = request.client.host if request.client is not None else "anonymous"
@@ -187,23 +222,8 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
             "locale": payload.locale or "pt-BR",
         }
 
-        # Persist user message first (best-effort)
-        try:
-            user_msg = {
-                "id": f"msg_{int(time.time()*1000)}_u",
-                "session_id": payload.user_id or client_host,
-                "content": payload.message,
-                "role": "user",
-                "timestamp": int(time.time() * 1000),
-                "sources": [],
-                "metadata": {"agent": "user"},
-            }
-            if settings.database_url:
-                await dbmod.save_message(user_msg)
-            else:
-                _conversations.setdefault(user_msg["session_id"], []).append({k: v for k, v in user_msg.items() if k != "session_id"})
-        except Exception:
-            pass
+        # NOTE: User message is saved by the regular /message endpoint
+        # This endpoint only processes the response to avoid duplication
 
         # Get the full response first (we'll stream it in chunks)
         result = graph.invoke(

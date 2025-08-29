@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from app.tools.user_profile import get_user_info
 from app.tools.ticketing import open_ticket
+from app.graph.memory import get_user_context_prompt, update_user_context
 
 from langsmith import traceable
 
@@ -11,18 +12,55 @@ from langsmith import traceable
 )
 def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_id = (state.get("user_id") if isinstance(state, dict) else None) or "unknown"
-    profile = get_user_info(user_id)
-    # Simple heuristic: if message mentions transfer/login, propose human help
-    message = ((state.get("message") if isinstance(state, dict) else None) or "").lower()
-    category = (
-        "transfer" if "transfer" in message else "login" if "sign in" in message or "login" in message else "general"
-    )
     message = (state.get("message") if isinstance(state, dict) else None) or ""
-    ticket = open_ticket(user_id, category, summary=str(message))
-    answer = (
-        "CustomerSupportAgent: I opened a support ticket and summarized your issue. "
-        f"Ticket {ticket['id']} is now open. Our team will contact you shortly."
-    )
+
+    # Get user context for personalized support
+    try:
+        context_prompt = get_user_context_prompt(user_id)
+        if context_prompt:
+            print(f"📋 Support: Using user context for {user_id}")
+    except Exception as e:
+        print(f"⚠️ Support: Failed to get user context: {e}")
+        context_prompt = ""
+
+    # Get user profile information
+    profile = get_user_info(user_id)
+
+    # Enhanced category detection based on message content
+    message_lower = message.lower()
+    if "transfer" in message_lower or "transação" in message_lower:
+        category = "transfer"
+    elif "sign in" in message_lower or "login" in message_lower or "entrar" in message_lower:
+        category = "login"
+    elif "password" in message_lower or "senha" in message_lower:
+        category = "password_reset"
+    elif "account" in message_lower or "conta" in message_lower:
+        category = "account_issue"
+    else:
+        category = "general"
+
+    # Create support ticket
+    ticket = open_ticket(user_id, category, summary=message)
+
+    # Personalized response based on user context
+    if context_prompt and "returning user" in context_prompt:
+        answer = (
+            f"CustomerSupportAgent: Welcome back! I see you've contacted us before. "
+            f"I've opened a new support ticket (#{ticket['id']}) for your {category} issue. "
+            f"Our team will review your previous interactions and get back to you shortly."
+        )
+    else:
+        answer = (
+            f"CustomerSupportAgent: I've opened a support ticket (#{ticket['id']}) for your {category} issue. "
+            f"Our support team will contact you shortly to help resolve this."
+        )
+
+    # Update user context with support interaction
+    try:
+        update_user_context(user_id, message, "CustomerSupportAgent", answer)
+    except Exception as e:
+        print(f"⚠️ Support: Failed to update user context: {e}")
+
     grounding = {
         "mode": "tools",
         "sources": [
@@ -30,11 +68,17 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
             {"type": "ticket", "data": ticket},
         ],
     }
-    meta = {"agent": "CustomerSupportAgent"}
-    base_meta: dict = {}
+
+    meta = {
+        "agent": "CustomerSupportAgent",
+        "ticket_id": ticket['id'],
+        "category": category,
+        "user_profile_status": profile.get("status", "unknown")
+    }
+
     return {
         "answer": answer,
         "agent": "CustomerSupportAgent",
         "grounding": grounding,
-        "meta": {**base_meta, **meta},
+        "meta": meta,
     }

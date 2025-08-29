@@ -159,21 +159,49 @@ class SessionApiService {
     return utils.getSessionId();
   }
 
-  async getConversationHistory(): Promise<any[]> {
+    async getConversationHistory(): Promise<any[]> {
     try {
       const sessionId = this.getSessionId();
-  const response = await axios.get(apiPath(`/api/v1/conversation/${sessionId}`), {
+      const response = await axios.get(apiPath(`/api/v1/conversation/${sessionId}`), {
         headers: { 'Cache-Control': 'no-cache' },
       });
       if (response.data && response.data.messages) {
-        return response.data.messages.map((msg: any) => ({
-          id: msg.id || `msg_${Date.now()}`,
-          content: msg.content || '',
-          role: msg.role || 'assistant',
-          timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
-          sources: msg.sources || [],
-          metadata: msg.metadata || {},
-        }));
+        return response.data.messages.map((msg: any) => {
+          // Parse JSON strings back to objects
+          let sources = [];
+          let metadata = {};
+
+          try {
+            if (typeof msg.sources === 'string') {
+              sources = JSON.parse(msg.sources);
+            } else if (Array.isArray(msg.sources)) {
+              sources = msg.sources;
+            }
+          } catch (e) {
+            console.warn('Error parsing sources:', e);
+            sources = [];
+          }
+
+          try {
+            if (typeof msg.metadata === 'string') {
+              metadata = JSON.parse(msg.metadata);
+            } else if (typeof msg.metadata === 'object') {
+              metadata = msg.metadata || {};
+            }
+          } catch (e) {
+            console.warn('Error parsing metadata:', e);
+            metadata = {};
+          }
+
+          return {
+            id: msg.id || `msg_${Date.now()}`,
+            content: msg.content || '',
+            role: msg.role || 'assistant',
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
+            sources: sources,
+            metadata: metadata,
+          };
+        });
       }
       return [];
     } catch (e) {
@@ -188,14 +216,42 @@ class SessionApiService {
         headers: { 'Cache-Control': 'no-cache' },
       });
       if (response.data && response.data.messages) {
-        return response.data.messages.map((msg: any) => ({
-          id: msg.id || `msg_${Date.now()}`,
-          content: msg.content || '',
-          role: msg.role || 'assistant',
-          timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
-          sources: msg.sources || [],
-          metadata: msg.metadata || {},
-        }));
+        return response.data.messages.map((msg: any) => {
+          // Parse JSON strings back to objects
+          let sources = [];
+          let metadata = {};
+
+          try {
+            if (typeof msg.sources === 'string') {
+              sources = JSON.parse(msg.sources);
+            } else if (Array.isArray(msg.sources)) {
+              sources = msg.sources;
+            }
+          } catch (e) {
+            console.warn('Error parsing sources:', e);
+            sources = [];
+          }
+
+          try {
+            if (typeof msg.metadata === 'string') {
+              metadata = JSON.parse(msg.metadata);
+            } else if (typeof msg.metadata === 'object') {
+              metadata = msg.metadata || {};
+            }
+          } catch (e) {
+            console.warn('Error parsing metadata:', e);
+            metadata = {};
+          }
+
+          return {
+            id: msg.id || `msg_${Date.now()}`,
+            content: msg.content || '',
+            role: msg.role || 'assistant',
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
+            sources: sources,
+            metadata: metadata,
+          };
+        });
       }
       return [];
     } catch (e) {

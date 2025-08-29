@@ -102,11 +102,12 @@ const StreamingMarkdown: React.FC<{ content: string; isStreaming: boolean }> = (
 interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (message: string) => void;
+  onLoadConversation: (sessionId: string) => void;
   onClearChat: () => void;
   isLoading: boolean;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, onClearChat, isLoading }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, onLoadConversation, onClearChat, isLoading }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -240,6 +241,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
       <Sidebar
         messages={messages}
         onNewChat={handleNewChat}
+        onLoadConversation={onLoadConversation}
         onClearChat={onClearChat}
       />
       {/* Main Chat Area */}

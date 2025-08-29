@@ -6,6 +6,7 @@ import { sessionApi } from '../services/api';
 interface SidebarProps {
   messages: Message[];
   onNewChat: () => void;
+  onLoadConversation: (sessionId: string) => void;
   onClearChat: () => void;
 }
 
@@ -20,6 +21,7 @@ interface ChatSession {
 const Sidebar: React.FC<SidebarProps> = ({
   messages,
   onNewChat,
+  onLoadConversation,
   onClearChat
 }) => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -155,7 +157,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                     key={session.id}
                     className="chat-item"
                     onClick={() => {
-                      console.log('Load session:', session.id);
+                      console.log('Loading conversation:', session.id);
+                      onLoadConversation(session.id);
                     }}
                   >
                     <div className="chat-item-content">
