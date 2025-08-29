@@ -126,7 +126,7 @@ async def message_endpoint(payload: MessagePayload, request: Request):
         inputs = {
             "user_id": payload.user_id,
             "message": payload.message,
-            "locale": payload.locale or "pt-BR",
+            "locale": payload.locale,
         }
         result = graph.invoke(
             inputs,
@@ -219,7 +219,7 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
         inputs = {
             "user_id": payload.user_id,
             "message": payload.message,
-            "locale": payload.locale or "pt-BR",
+            "locale": payload.locale,
         }
 
         # NOTE: User message is saved by the regular /message endpoint

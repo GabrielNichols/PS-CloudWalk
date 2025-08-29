@@ -132,6 +132,11 @@ class MilvusVectorStore:
     @classmethod
     def connect_retriever(cls, embedding: Any, k: int = 3):
         try:
+            # Validate embedding function
+            if not embedding:
+                logger.error("Vector retriever creation failed: embedding function is None")
+                return None
+
             # Use Milvus with Zilliz Cloud configuration optimized for performance
             connection_args = {
                 "uri": settings.zilliz_cloud_uri,
@@ -161,11 +166,17 @@ class MilvusVectorStore:
 
             return store.as_retriever(search_kwargs=search_kwargs)
         except Exception as e:
-            raise RuntimeError(f"Failed to connect Zilliz Cloud chunks collection: {e}")
+            logger.error(f"Failed to connect Zilliz Cloud chunks collection: {e}")
+            return None
 
     @classmethod
     def connect_faq_retriever(cls, embedding: Any, k: int = 3):
         try:
+            # Validate embedding function
+            if not embedding:
+                logger.error("FAQ retriever creation failed: embedding function is None")
+                return None
+
             # Use Milvus with Zilliz Cloud configuration optimized for performance
             connection_args = {
                 "uri": settings.zilliz_cloud_uri,
@@ -195,7 +206,8 @@ class MilvusVectorStore:
 
             return store.as_retriever(search_kwargs=search_kwargs)
         except Exception as e:
-            raise RuntimeError(f"Failed to connect Zilliz Cloud FAQ collection: {e}")
+            logger.error(f"Failed to connect Zilliz Cloud FAQ collection: {e}")
+            return None
 
     @classmethod
     def index_in_batches(cls, documents: List[Document], embedding: Any, batch_size: int = 100) -> None:

@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_per_minute: int = Field(60, alias="RATE_LIMIT_PER_MINUTE")
 
+    # Knowledge Agent Warm-up
+    knowledge_warmup_enabled: bool = Field(True, alias="KNOWLEDGE_WARMUP_ENABLED")
+    knowledge_warmup_async: bool = Field(True, alias="KNOWLEDGE_WARMUP_ASYNC")
+    knowledge_warmup_on_first_query: bool = Field(True, alias="KNOWLEDGE_WARMUP_ON_FIRST_QUERY")
+
     # Slack integration (CustomAgent)
     slack_bot_token: str | None = Field(default=None, alias="SLACK_BOT_TOKEN")
     slack_default_channel: str = Field("#support", alias="SLACK_DEFAULT_CHANNEL")

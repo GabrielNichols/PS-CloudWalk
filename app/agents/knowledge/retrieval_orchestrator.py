@@ -79,9 +79,8 @@ class AsyncRetrievalOrchestrator:
         # Special characters (queries with symbols)
         complexity += question.count("?") + question.count("!")
 
-        # Product-specific terms
-        product_keywords = ["maquininha", "cartão", "pix", "boleto", "taxa", "fee", "pagamento"]
-        complexity += sum(1 for keyword in product_keywords if keyword.lower() in question.lower())
+        # Let AI assess complexity naturally from full context
+        # No hardcoded keyword matching for complexity assessment
 
         return complexity
 
@@ -98,6 +97,12 @@ class AsyncRetrievalOrchestrator:
         start_time = time.perf_counter()
 
         try:
+            # Check if embeddings are available
+            if not emb_shared:
+                logger.warning("Vector retrieval skipped: embeddings not available")
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                return RetrievalResult([], latency_ms, 0, "embeddings_not_available")
+
             # Try cache first
             cache_key = f"vector:{question}"
             cached_result = self._cache_manager.get(cache_key, "retrieval")
@@ -111,7 +116,12 @@ class AsyncRetrievalOrchestrator:
             connect_start = time.perf_counter()
             if not retriever:
                 retriever = VectorRAGRetriever(embedding=emb_shared, k=vector_k)
-                self._cache_manager.set_retriever(retriever_name, retriever)
+                if retriever:
+                    self._cache_manager.set_retriever(retriever_name, retriever)
+                else:
+                    logger.error("Vector retriever creation failed")
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    return RetrievalResult([], latency_ms, 0, "retriever_creation_failed")
 
             connect_ms = (time.perf_counter() - connect_start) * 1000
 
@@ -137,6 +147,12 @@ class AsyncRetrievalOrchestrator:
         start_time = time.perf_counter()
 
         try:
+            # Check if embeddings are available
+            if not emb_shared:
+                logger.warning("FAQ retrieval skipped: embeddings not available")
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                return RetrievalResult([], latency_ms, 0, "embeddings_not_available")
+
             # Try cache first
             cache_key = f"faq:{question}"
             cached_result = self._cache_manager.get(cache_key, "retrieval")
@@ -150,7 +166,12 @@ class AsyncRetrievalOrchestrator:
             connect_start = time.perf_counter()
             if not retriever:
                 retriever = MilvusVectorStore.connect_faq_retriever(embedding=emb_shared, k=2)
-                self._cache_manager.set_retriever(retriever_name, retriever)
+                if retriever:
+                    self._cache_manager.set_retriever(retriever_name, retriever)
+                else:
+                    logger.error("FAQ retriever creation failed")
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    return RetrievalResult([], latency_ms, 0, "retriever_creation_failed")
 
             connect_ms = (time.perf_counter() - connect_start) * 1000
 

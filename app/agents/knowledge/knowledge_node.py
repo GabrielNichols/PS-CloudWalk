@@ -22,6 +22,7 @@ from app.agents.knowledge.cache_manager import get_cache_manager
 from app.agents.knowledge.retrieval_orchestrator import get_orchestrator
 from app.agents.knowledge.context_builder import get_context_builder
 from app.agents.knowledge.profiler import get_profiler, profile_step, log_profile
+from app.agents.knowledge.warmup import get_warmup_instance
 
 logger = logging.getLogger(__name__)
 
@@ -30,44 +31,34 @@ _cache_manager = get_cache_manager()
 _orchestrator = get_orchestrator()
 _context_builder = get_context_builder()
 _profiler = get_profiler()
+_warmup = get_warmup_instance()
 
 
 def _get_system_prompt(locale: str | None, user_id: str = None) -> str:
-    """Build system prompt with locale and user context support."""
-    # Determine language instruction based on locale
-    if (locale or "").lower().startswith("pt"):
-        language_instruction = (
-            "Always answer in Portuguese (pt-BR), maintain consistent Portuguese throughout the response. "
-            "Use Brazilian Portuguese spelling and expressions."
-        )
-        locale_prefix = "[pt-BR]"
-    else:
-        language_instruction = (
-            "Always answer in English, do not mix languages."
-        )
-        locale_prefix = "[en]"
+    """
+    Build system prompt.
 
-    policy = (
-        "Follow policy: do not request or output secrets/PII; avoid politics, violence, or hate; "
-        "if insufficient context, say you don't know and suggest contacting human support. "
-        "Cite sources at the end as URLs under 'Sources:'. Answer strictly about InfinitePay products "
-        "(Maquininha, Tap to Pay, PDV, Pix, Conta, Boleto, Link, Empréstimo, Cartão). Prefer information "
-        "grounded by the provided context. If the context is insufficient, explicitly say you don't know. "
-        f"{language_instruction} Output format: short answer first, then bullet points if needed, "
-        "then 'Sources:' with one most-relevant URL. If you already include a 'Sources:' section, do not add another one."
-    )
+    Uses structured role, goal, and backstory approach.
+    """
+    from app.agents.prompts import build_system_prompt
 
-    # Add user context if available
+    # Get user context for better personalization
+    context_prompt = ""
     if user_id:
         try:
             context_prompt = get_user_context_prompt(user_id)
-            if context_prompt:
-                policy = context_prompt + " " + policy
         except Exception:
             # Fail gracefully if context retrieval fails
             pass
 
-    return f"{locale_prefix} {policy}"
+    # Build system prompt
+    system_msg = build_system_prompt(
+        agent_name="knowledge",
+        locale=locale,
+        user_context=context_prompt
+    )
+
+    return system_msg.content
 
 
 def _build_llm_client() -> Optional[OpenAI]:
@@ -126,6 +117,7 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
     - AsyncRetrievalOrchestrator: Parallel retrieval execution
     - ContextBuilder: Intelligent context construction
     - LangSmithProfiler: Granular performance tracking
+    - WarmupSystem: Intelligent pre-loading for optimal performance
     """
     with profile_step("KnowledgeAgent.Modular", {"state_keys": list(state.keys())}):
 
@@ -144,6 +136,15 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Set profiler metadata
         _profiler.set_metadata("question", question)
         _profiler.set_metadata("agent_version", "modular")
+
+        # Warm-up system integration
+        if settings.knowledge_warmup_on_first_query and not _warmup.is_warmed_up():
+            logger.info("🔥 First query detected - triggering lazy warm-up...")
+            _warmup.warmup_lazy(question)
+            meta["warmup_triggered"] = True
+            meta["warmup_status"] = _warmup.get_warmup_status()
+        else:
+            meta["warmup_status"] = _warmup.get_warmup_status()
 
         with profile_step("KnowledgeAgent.Setup"):
             # Apply guardrails

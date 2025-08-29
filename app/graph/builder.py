@@ -9,31 +9,24 @@ from app.agents.custom import custom_node
 
 def pre_greeting_routing(state):
     """
-    Stateful routing: Route to the last used agent if available.
+    Intelligent stateful routing that lets AI decide everything.
 
-    Enhanced with greeting optimization for better UX.
+    No hardcoded rules - AI analyzes context and makes smart decisions.
     """
     current_route = state.get("current_route")
     routing_history = state.get("routing_history", [])
-    message = state.get("message", "").lower().strip()
 
-    # Check if this is a simple greeting - skip complex routing
-    greeting_keywords = ["ola", "olá", "oi", "hi", "hello", "hey", "bom dia", "boa tarde", "boa noite"]
-    if any(word in message for word in greeting_keywords) and len(message.split()) <= 3:
-        print("🔄 Quick greeting detected, routing to personality for fast response")
-        return "personality"
-
-    # If we have an active route and recent history, continue with it
+    # Check if we should continue with existing agent based on context
     if current_route and routing_history:
         last_routing = routing_history[-1] if routing_history else {}
         confidence = last_routing.get("confidence", 0)
 
-        # Continue with active route if confidence is high
+        # Continue with active route if confidence is high and context suggests continuation
         if confidence > 0.8:
             print(f"🔄 Stateful routing: Continuing with {current_route} (confidence: {confidence})")
             return current_route
 
-    # Default to intelligent router for new conversations
+    # Let AI make intelligent routing decisions for all cases
     return "intelligent_router"
 
 
@@ -68,15 +61,15 @@ def build_graph(checkpointer=None):
     g.add_node("custom", custom_node)
     g.add_node("personality", personality_node)
 
-    # Pre-routing: Check if we should continue with existing agent
+    # Intelligent routing - AI decides everything based on context
     g.add_conditional_edges(
         START,
         pre_greeting_routing,
         {
-            "intelligent_router": "intelligent_router",  # New conversation - use AI routing
-            "knowledge": "knowledge",  # Continue with knowledge agent
-            "support": "support",      # Continue with support agent
-            "custom": "custom",        # Continue with custom agent
+            "intelligent_router": "intelligent_router",  # AI makes all routing decisions
+            "knowledge": "knowledge",  # Continue with knowledge agent if needed
+            "support": "support",      # Continue with support agent if needed
+            "custom": "custom",        # Continue with custom agent if needed
         }
     )
 
@@ -88,6 +81,7 @@ def build_graph(checkpointer=None):
             "knowledge": "knowledge",
             "support": "support",
             "custom": "custom",
+            "personality": "personality",  # AI can route to personality for greetings
             END: END,
         }
     )

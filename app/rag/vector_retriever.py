@@ -46,7 +46,11 @@ class VectorRAGRetriever:
         self.mmr_lambda = float(mmr_lambda if mmr_lambda is not None else (settings.rag_mmr_lambda or 0.5))
 
         if not self.embedding:
-            raise RuntimeError("Embeddings backend not configured")
+            logger.error("VectorRAGRetriever: Embeddings backend not configured - retrieval will be disabled")
+            # Don't raise exception, allow graceful degradation
+            self._embeddings_available = False
+        else:
+            self._embeddings_available = True
 
         # Use centralized cache instead of local cache
         self._retriever_cache_key = f"vector_retriever_{hash(str(self.embedding))}_{self.fetch_k}"
@@ -60,6 +64,11 @@ class VectorRAGRetriever:
         if self._base is not None:
             return self._base
 
+        # Check if embeddings are available
+        if not self._embeddings_available:
+            logger.warning("Vector retriever creation skipped: embeddings not available")
+            return None
+
         # Try cache first
         cached_retriever = _cache_manager.get_retriever(self._retriever_cache_key)
         if cached_retriever:
@@ -69,7 +78,8 @@ class VectorRAGRetriever:
         # Create new retriever
         retriever = MilvusVectorStore.connect_retriever(embedding=self.embedding, k=self.fetch_k)
         if not retriever:
-            raise RuntimeError("Vector retriever not available (MilvusVector connection failed)")
+            logger.error("Vector retriever not available (MilvusVector connection failed)")
+            return None
 
         # Cache retriever
         _cache_manager.set_retriever(self._retriever_cache_key, retriever)
@@ -100,6 +110,11 @@ class VectorRAGRetriever:
             if not qn:
                 return []
 
+            # Check if embeddings are available
+            if not self._embeddings_available:
+                logger.debug("Vector retrieval skipped: embeddings not available")
+                return []
+
             # Try centralized cache first
             cache_key = f"vector_retrieval:{qn}"
             cached_result = _cache_manager.get(cache_key, "retrieval")
@@ -113,6 +128,9 @@ class VectorRAGRetriever:
 
             # Get retriever and perform retrieval
             retriever = self._get_base_retriever()
+            if not retriever:
+                logger.warning("Vector retrieval failed: retriever not available")
+                return []
 
             start_time = time.perf_counter()
             try:

@@ -161,29 +161,8 @@ def update_user_context(user_id: str, message: str, agent: str, response: str = 
         context["last_agent"] = agent
         context["last_interaction"] = message
 
-        # Detect language preference
-        if any(word in message.lower() for word in ["portuguese", "português", "pt-br", "brasil"]):
-            context["preferred_language"] = "pt-BR"
-        elif any(word in message.lower() for word in ["english", "inglês", "en"]):
-            context["preferred_language"] = "en"
-
-        # Detect topics (simple keyword matching)
-        topics = []
-        topic_keywords = {
-            "payments": ["pagamento", "boleto", "pix", "transfer"],
-            "cards": ["cartão", "crédito", "débito", "chip"],
-            "machines": ["maquininha", "pos", "tap to pay", "celular"],
-            "accounts": ["conta", "login", "senha", "acesso"],
-            "support": ["ajuda", "problema", "erro", "suporte"]
-        }
-
-        for topic, keywords in topic_keywords.items():
-            if any(keyword in message.lower() for keyword in keywords):
-                topics.append(topic)
-
-        if topics:
-            context["last_topic"] = topics[0]
-            context["topics_discussed"] = list(set(context["topics_discussed"] + topics))
+        # Let AI detect language and topics naturally from context
+        # No hardcoded keyword matching - AI handles everything
 
         # Store updated context
         store_user_memory(user_id, "context", "current", context)
