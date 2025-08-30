@@ -23,6 +23,24 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
         print(f"⚠️ Support: Failed to get user context: {e}")
         context_prompt = ""
 
+    # Get recent conversation context (short-term memory)
+    conversation_context = ""
+    if state.get("messages"):
+        messages = state["messages"]
+        # Get recent conversation history (last 5 exchanges)
+        recent_messages = messages[-6:-1] if len(messages) > 6 else messages[:-1] if messages else []
+        if recent_messages:
+            context_parts = []
+            for msg in recent_messages:
+                if hasattr(msg, 'type'):
+                    if msg.type == 'human':
+                        context_parts.append(f"User: {msg.content}")
+                    elif msg.type == 'ai':
+                        context_parts.append(f"Assistant: {msg.content}")
+            if context_parts:
+                conversation_context = "\n".join(context_parts)
+                print(f"📋 Support: Using recent conversation context ({len(context_parts)} messages)")
+
     # Get user profile information
     profile = get_user_info(user_id)
 

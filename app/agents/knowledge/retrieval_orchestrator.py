@@ -109,12 +109,18 @@ class AsyncRetrievalOrchestrator:
             if cached_result:
                 return cached_result
 
-            # Create retriever if needed
-            retriever_name = "vector_main"
+            # Try pre-created lazy retriever first
+            retriever_name = "vector_retriever_lazy"
             retriever = self._cache_manager.get_retriever(retriever_name)
 
             connect_start = time.perf_counter()
             if not retriever:
+                # Fallback to main retriever
+                retriever_name = "vector_main"
+                retriever = self._cache_manager.get_retriever(retriever_name)
+
+            if not retriever:
+                # Last resort - create new retriever
                 retriever = VectorRAGRetriever(embedding=emb_shared, k=vector_k)
                 if retriever:
                     self._cache_manager.set_retriever(retriever_name, retriever)
@@ -126,7 +132,7 @@ class AsyncRetrievalOrchestrator:
             connect_ms = (time.perf_counter() - connect_start) * 1000
 
             # Execute retrieval
-            docs = retriever.retrieve(question)
+            docs = retriever.invoke(question)
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             result = RetrievalResult(docs, latency_ms, connect_ms)
@@ -159,12 +165,18 @@ class AsyncRetrievalOrchestrator:
             if cached_result:
                 return cached_result
 
-            # Get FAQ retriever
-            retriever_name = "faq_main"
+            # Try pre-created lazy retriever first
+            retriever_name = "faq_retriever_lazy"
             retriever = self._cache_manager.get_retriever(retriever_name)
 
             connect_start = time.perf_counter()
             if not retriever:
+                # Fallback to main retriever
+                retriever_name = "faq_main"
+                retriever = self._cache_manager.get_retriever(retriever_name)
+
+            if not retriever:
+                # Last resort - create new retriever
                 retriever = MilvusVectorStore.connect_faq_retriever(embedding=emb_shared, k=2)
                 if retriever:
                     self._cache_manager.set_retriever(retriever_name, retriever)
@@ -289,3 +301,5 @@ def orchestrate_retrieval(
 ) -> Tuple[RetrievalResult, RetrievalResult]:
     """Convenience function for retrieval orchestration."""
     return _orchestrator.orchestrate(question, vector_k, emb_shared, enable_vector, enable_faq)
+
+

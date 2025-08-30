@@ -38,14 +38,60 @@ graph = None
 @app.on_event("startup")
 async def initialize_checkpointer():
     global checkpointer, graph
+
+    print("🚀 FastAPI Startup - Initializing Knowledge Agent...")
+
+    # Initialize warm-up system (includes embeddings pre-loading)
+    print("🔥 Initializing Knowledge Agent warm-up system...")
     try:
+        from app.agents.knowledge.warmup import initialize_warmup_system
+        initialize_warmup_system()
+    except Exception as e:
+        print(f"⚠️ Failed to initialize warm-up system: {e}")
+        # Fallback to basic embeddings pre-loading
+        print("🔄 Pre-loading embeddings as fallback...")
+        try:
+            from app.rag.embeddings import get_embeddings
+            from app.agents.knowledge.cache_manager import get_cache_manager
+
+            embeddings = get_embeddings()
+            if embeddings:
+                cache_manager = get_cache_manager()
+                cache_manager.set("embeddings", embeddings, "system", ttl=3600)
+                print("✅ Embeddings pre-loaded and cached")
+            else:
+                print("⚠️ Embeddings not available - RAG will be limited")
+        except Exception as e2:
+            print(f"⚠️ Failed to pre-load embeddings: {e2}")
+
+    # Initialize graph with checkpointer and long-term memory store
+    try:
+        print("🔄 Initializing graph, checkpointer and long-term memory store...")
         checkpointer = get_langgraph_checkpointer()
-        graph = build_graph(checkpointer=checkpointer)
-    except Exception:
+
+        # Initialize long-term memory store
+        store = None
+        try:
+            from app.graph.memory import get_memory_store
+            store = get_memory_store()
+            if store and not isinstance(store, dict):  # Check if it's not in-memory fallback
+                print("✅ Long-term memory store initialized")
+            else:
+                print("⚠️ Using in-memory fallback for long-term memory")
+        except Exception as e:
+            print(f"⚠️ Long-term memory store initialization failed: {e}")
+
+        graph = build_graph(checkpointer=checkpointer, store=store)
+        print("✅ Graph initialized successfully with memory capabilities")
+    except Exception as e:
+        print(f"⚠️ Graph initialization failed, using fallback: {e}")
         # Fallback to in-memory
         from langgraph.checkpoint.memory import MemorySaver
         checkpointer = MemorySaver()
         graph = build_graph(checkpointer=checkpointer)
+        print("✅ Graph initialized with fallback checkpointer")
+
+    print("🎯 FastAPI Startup Complete - Knowledge Agent Ready!")
 
 
 _rate_limiter_store: dict[str, list[float]] = {}
@@ -75,6 +121,26 @@ def _allow_request(user_id: str) -> bool:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/api/v1/warmup/status")
+async def warmup_status():
+    """Get current warm-up status."""
+    try:
+        from app.agents.knowledge.warmup import check_warmup_status
+        status = check_warmup_status()
+        return {
+            "ok": True,
+            "warmup": status
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "warmup": {
+                "status": "error",
+                "message": "Unable to check warm-up status"
+            }
+        }
 
 
 @app.get("/version")

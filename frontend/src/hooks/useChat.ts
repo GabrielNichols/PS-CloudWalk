@@ -12,27 +12,39 @@ export const useChat = () => {
 
   // Load messages from backend on mount
   useEffect(() => {
+    let isMounted = true;
+
     const loadConversation = async () => {
       try {
+        console.log('🔄 Loading initial conversation...');
         const sessionId = getSessionId();
         const conversationHistory = await sessionApi.getConversationHistory();
 
-        setState(prev => ({
-          ...prev,
-          messages: conversationHistory,
-          currentSessionId: sessionId,
-        }));
+        if (isMounted) {
+          setState(prev => ({
+            ...prev,
+            messages: conversationHistory,
+            currentSessionId: sessionId,
+          }));
+          console.log(`✅ Loaded ${conversationHistory.length} initial messages`);
+        }
       } catch (error) {
         console.warn('Failed to load conversation history:', error);
         // Fallback to empty state
-        setState(prev => ({
-          ...prev,
-          currentSessionId: getSessionId(),
-        }));
+        if (isMounted) {
+          setState(prev => ({
+            ...prev,
+            currentSessionId: getSessionId(),
+          }));
+        }
       }
     };
 
     loadConversation();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Frontend no longer posts full conversation automatically; backend already persists per-message.
@@ -137,6 +149,20 @@ export const useChat = () => {
   }, [state.currentSessionId]);
 
   const loadConversation = useCallback(async (sessionId: string) => {
+    // Prevent loading if already loading this session
+    if (state.isLoading && state.currentSessionId === sessionId) {
+      console.log(`⚠️ Already loading conversation for ${sessionId}, skipping...`);
+      return;
+    }
+
+    // Prevent loading if already loading any session
+    if (state.isLoading) {
+      console.log(`⚠️ Already loading another conversation, skipping ${sessionId}...`);
+      return;
+    }
+
+    console.log(`🔄 Loading conversation for session: ${sessionId}`);
+
     try {
       setState(prev => ({
         ...prev,
@@ -148,6 +174,8 @@ export const useChat = () => {
       // Load conversation history from backend
       const conversationHistory = await sessionApi.getConversationHistoryBy(sessionId);
 
+      console.log(`✅ Loaded ${conversationHistory.length} messages for session ${sessionId}`);
+
       setState(prev => ({
         ...prev,
         messages: conversationHistory,
@@ -155,22 +183,44 @@ export const useChat = () => {
         currentSessionId: sessionId,
       }));
 
-      console.log(`Loaded conversation with ${conversationHistory.length} messages for session ${sessionId}`);
     } catch (error) {
-      console.error('Failed to load conversation:', error);
+      console.error(`❌ Failed to load conversation for ${sessionId}:`, error);
+
+      // Fallback: show empty state for this session
       setState(prev => ({
         ...prev,
+        messages: [],
+        isLoading: false,
+        currentSessionId: sessionId,
+      }));
+
+      // Show user-friendly error message
+      const errorMessage: Message = {
+        id: `error_${Date.now()}`,
+        content: 'Unable to load conversation. Please try again.',
+        role: 'assistant',
+        timestamp: new Date(),
+        metadata: { agent: 'Error' },
+      };
+
+      setState(prev => ({
+        ...prev,
+        messages: [errorMessage],
         isLoading: false,
       }));
     }
-  }, []);
+  }, [state.isLoading, state.currentSessionId]);
 
   const clearChat = useCallback(async () => {
-    try {
-      // Clear conversation on backend
-      await sessionApi.clearConversation();
-    } catch (error) {
-      console.warn('Failed to clear conversation on backend:', error);
+    // First save current conversation if it has messages
+    if (state.messages.length > 0) {
+      try {
+        console.log('💾 Saving current conversation before clearing...');
+        await sessionApi.saveConversation(state.messages);
+        console.log('✅ Current conversation saved');
+      } catch (error) {
+        console.warn('⚠️ Failed to save current conversation:', error);
+      }
     }
 
     // Clear local session data
@@ -181,7 +231,9 @@ export const useChat = () => {
       isLoading: false,
       currentSessionId: getSessionId(), // Generate new session
     });
-  }, []);
+
+    console.log('🆕 New chat session created');
+  }, [state.messages]);
 
   return {
     messages: state.messages,

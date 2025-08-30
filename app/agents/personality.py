@@ -37,40 +37,100 @@ def personality_node(state: Dict[str, Any]) -> Dict[str, Any]:
     grounding = state.get("grounding") if isinstance(state, dict) else None
     meta = (state.get("meta") if isinstance(state, dict) else {}) or {}
 
-    # Get user context for enhanced personality
-    try:
-        context_prompt = get_user_context_prompt(user_id) if user_id else ""
-        if context_prompt:
-            print(f"📋 PersonalityAgent: Using user context for {user_id}")
-    except Exception as e:
-        print(f"⚠️ PersonalityAgent: Failed to get user context: {e}")
-        context_prompt = ""
+    # Get enhanced user context including long-term memory
+    context_prompt = ""
+    long_term_memory = ""
 
-    # Generate response using LangChain messages
+    try:
+        # Get basic context from database
+        basic_context = get_user_context_prompt(user_id) if user_id else ""
+
+        # Get long-term memory from state if available
+        if state.get("user_context"):
+            if isinstance(state["user_context"], dict) and state["user_context"].get("long_term_memory"):
+                long_term_memory = state["user_context"]["long_term_memory"]
+            elif isinstance(state["user_context"], str):
+                long_term_memory = state["user_context"]
+
+        # Combine contexts for more natural conversation
+        if basic_context or long_term_memory:
+            context_parts = []
+            if basic_context:
+                context_parts.append(f"User background: {basic_context}")
+            if long_term_memory:
+                context_parts.append(f"Recent conversation topics: {long_term_memory}")
+            context_prompt = " ".join(context_parts)
+            print(f"📋 PersonalityAgent: Using enhanced context for {user_id}")
+
+            # Extract user name if available for personalization
+            user_name = ""
+            # Extract any relevant user information naturally from context
+            # Let the LLM decide what information is important to remember
+            # No hardcoded patterns - the AI should be free to remember anything
+
+    except Exception as e:
+        print(f"⚠️ PersonalityAgent: Failed to get context: {e}")
+        user_name = ""
+
+    # Generate response using LangChain messages with full session context
     if not answer or answer.strip() == "":
         try:
             from openai import OpenAI
             from app.settings import settings
-
             if settings.openai_api_key:
                 client = OpenAI(api_key=settings.openai_api_key)
 
-                # Use structured message format
-                messages = create_agent_messages(
-                    agent_name="personality",
-                    user_message=message,
-                    locale=locale,
-                    user_context=context_prompt
-                )
+                # Build comprehensive conversation context from state messages (short-term memory)
+                conversation_context = []
+                if state.get("messages"):
+                    messages = state["messages"]
+                    # Get recent conversation history (last 10 exchanges for better context)
+                    recent_messages = messages[-11:-1] if len(messages) > 11 else messages[:-1] if messages else []
 
-                # Convert to OpenAI format for API call
-                openai_messages = []
-                for msg in messages:
-                    if hasattr(msg, 'type'):
-                        if msg.type == 'system':
-                            openai_messages.append({"role": "system", "content": msg.content})
-                        elif msg.type == 'human':
-                            openai_messages.append({"role": "user", "content": msg.content})
+                    for msg in recent_messages:
+                        if hasattr(msg, 'type'):
+                            if msg.type == 'human':
+                                conversation_context.append({"role": "user", "content": msg.content})
+                            elif msg.type == 'ai':
+                                conversation_context.append({"role": "assistant", "content": msg.content})
+
+                # Create enhanced system message with memory context and personalization
+                system_content = f"""You are a friendly customer service assistant for InfinitePay.
+
+GOAL: Provide warm, welcoming responses and maintain natural conversation flow with personalization.
+
+BACKSTORY: You are a helpful assistant that remembers previous conversations, user preferences, and provides highly personalized service.
+
+INSTRUCTIONS:
+- Communicate naturally in the user's language
+- CRITICAL: If the user asks about their name or personal information, FIRST check the PREVIOUS CONVERSATIONS section below
+- If you find the information in PREVIOUS CONVERSATIONS, use it in your response
+- Reference previous conversation topics when relevant to make responses more personal
+- Don't repeat greetings if you've already greeted the user
+- Use conversation context to provide relevant, personalized responses
+- Be helpful, professional, and conversational
+- Make the user feel recognized and valued by using their personal information
+- Cite sources at the end as URLs under 'Sources:' when relevant
+
+{f'PREVIOUS CONVERSATIONS: {context_prompt}' if context_prompt else ''}
+
+RESPONSE GUIDELINES:
+- If user says "Qual é o meu nome?" and you see "meu nome é João" in conversations, respond "Seu nome é João"
+- If user says "O que eu faço?" and you see "sou desenvolvedor" in conversations, respond "Você é desenvolvedor"
+- Always use the exact information from previous conversations when available
+
+Continue the conversation naturally, making the user feel remembered and valued."""
+
+                # Build messages for OpenAI API
+                openai_messages = [
+                    {"role": "system", "content": system_content}
+                ]
+
+                # Add recent conversation history
+                openai_messages.extend(conversation_context)
+
+                # Add current user message
+                openai_messages.append({"role": "user", "content": message})
 
                 response = client.chat.completions.create(
                     model=settings.openai_model or "gpt-4o-mini",
@@ -91,6 +151,10 @@ def personality_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Apply personality formatting with context awareness
     styled = _format_answer(answer, locale)
+
+    # Set confidence for personality responses
+    if not meta.get("confidence"):
+        meta["confidence"] = 0.9  # High confidence for personality agent
 
     # Update user context with final response
     if user_id:

@@ -32,13 +32,35 @@ def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
     message = (state.get("message") if isinstance(state, dict) else None) or ""
 
     # Get user context for personalized escalation
+    context_prompt = ""
     try:
         context_prompt = get_user_context_prompt(user_id)
         if context_prompt:
             print(f"📋 Custom: Using user context for {user_id}")
+            # Include user context in the escalation message for human agents
+            if "returning user" in context_prompt or "interaction_count" in context_prompt:
+                print("   👤 User has previous interactions - providing detailed context to human agent")
     except Exception as e:
         print(f"⚠️ Custom: Failed to get user context: {e}")
         context_prompt = ""
+
+    # Get recent conversation context (short-term memory)
+    conversation_context = ""
+    if state.get("messages"):
+        messages = state["messages"]
+        # Get recent conversation history (last 5 exchanges)
+        recent_messages = messages[-6:-1] if len(messages) > 6 else messages[:-1] if messages else []
+        if recent_messages:
+            context_parts = []
+            for msg in recent_messages:
+                if hasattr(msg, 'type'):
+                    if msg.type == 'human':
+                        context_parts.append(f"User: {msg.content}")
+                    elif msg.type == 'ai':
+                        context_parts.append(f"Assistant: {msg.content}")
+            if context_parts:
+                conversation_context = "\n".join(context_parts)
+                print(f"📋 Custom: Using recent conversation context ({len(context_parts)} messages)")
 
     meta = {"agent": "CustomAgent"}
     base_meta: dict = {}
@@ -53,8 +75,8 @@ def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if any(k in message_lower for k in ["human", "help", "assist", "atendente", "pessoa"]):
         res = escalate_to_human(user_id, summary=message)
 
-        # Personalized escalation message
-        if context_prompt and "returning user" in context_prompt:
+        # Personalized escalation message with user context
+        if context_prompt and ("returning user" in context_prompt or "interaction_count" in context_prompt):
             answer = (
                 "CustomAgent: I see you've reached out before. I've escalated your request to our senior support team. "
                 "They'll have full context of your previous interactions and will reach out to you shortly."
@@ -68,11 +90,16 @@ def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
         grounding = {"mode": "human/escalation", "tools": [res], "confidence": conf}
 
     else:
-        # Slack notification with user context
+        # Slack notification with enhanced user context
         channel = settings.slack_default_channel or "#support"
         slack_message = f"User {user_id}: {message}"
+
         if context_prompt:
-            slack_message += f"\n\nUser Context: {context_prompt[:200]}..."
+            slack_message += f"\n\n👤 User Context: {context_prompt[:300]}..."
+            if "returning user" in context_prompt:
+                slack_message += "\n🔄 RETURNING USER - Check previous interactions"
+            if "interaction_count" in context_prompt:
+                slack_message += "\n📊 MULTIPLE INTERACTIONS - Review history"
 
         res = send_slack_message(channel, slack_message)
 

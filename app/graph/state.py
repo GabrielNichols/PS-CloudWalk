@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, List
 from pydantic import BaseModel
+from langchain_core.messages import BaseMessage
 
 
 class AppState(BaseModel):
@@ -7,6 +8,9 @@ class AppState(BaseModel):
     user_id: str
     message: str
     locale: Optional[str] = None
+
+    # Conversation memory - essential for LangGraph message persistence
+    messages: List[BaseMessage] = []
 
     # Intelligent routing fields
     intent: Optional[str] = None

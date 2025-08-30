@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MessageSquare, Plus, Trash2, Clock, User, Bot, X, Menu } from 'lucide-react';
 import { Message } from '../types';
 import { sessionApi } from '../services/api';
@@ -28,6 +28,43 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [loading, setLoading] = useState(false);
   const [lastMessageCount, setLastMessageCount] = useState(0);
 
+  const loadSessions = async () => {
+    if (loading) {
+      console.log('⚠️ loadSessions already in progress, skipping...');
+      return;
+    }
+
+    console.log('🔄 Loading sessions list...');
+    try {
+      setLoading(true);
+      const sessionList = await sessionApi.getSessionList();
+      console.log(`✅ Loaded ${sessionList.length} sessions`);
+      setSessions(sessionList);
+    } catch (error) {
+      console.warn('❌ Failed to load sessions:', error);
+      setSessions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Debounced version to prevent rapid successive calls
+  const debouncedLoadSessions = useCallback(() => {
+    if (loading) return;
+
+    // Clear any existing timeout
+    if ((window as any).__sidebarTimeout) {
+      clearTimeout((window as any).__sidebarTimeout);
+    }
+
+    // Set new timeout
+    (window as any).__sidebarTimeout = setTimeout(() => {
+      if (!loading) { // Double check loading state
+        loadSessions();
+      }
+    }, 100);
+  }, [loading]);
+
   useEffect(() => {
     loadSessions();
   }, []);
@@ -36,27 +73,18 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     const currentMessageCount = messages.length;
     const isFirstMessage = lastMessageCount === 0 && currentMessageCount === 1;
-    
-    if (isFirstMessage) {
-      // Wait a bit for the backend to process the session
-      setTimeout(() => loadSessions(), 500);
-    }
-    
-    setLastMessageCount(currentMessageCount);
-  }, [messages.length, lastMessageCount]);
 
-  const loadSessions = async () => {
-    try {
-      setLoading(true);
-      const sessionList = await sessionApi.getSessionList();
-      setSessions(sessionList);
-    } catch (error) {
-      console.warn('Failed to load sessions:', error);
-      setSessions([]);
-    } finally {
-      setLoading(false);
+    if (isFirstMessage) {
+      console.log('📝 First message added, scheduling session reload...');
+      // Wait a bit for the backend to process the session
+      setTimeout(() => {
+        console.log('🔄 Auto-reloading sessions after first message...');
+        debouncedLoadSessions();
+      }, 1000); // Increased delay to avoid conflicts
     }
-  };
+
+    setLastMessageCount(currentMessageCount);
+  }, [messages.length, lastMessageCount, debouncedLoadSessions]);
 
   const formatTime = (date: Date | string | number) => {
     try {
@@ -79,19 +107,36 @@ const Sidebar: React.FC<SidebarProps> = ({
   const getCurrentSessionTitle = () => {
     if (messages.length === 0) return 'New conversation';
 
-    const firstUserMessage = messages.find(m => m.role === 'user');
-    if (firstUserMessage) {
-      return firstUserMessage.content.length > 25
-        ? firstUserMessage.content.substring(0, 25) + '...'
-        : firstUserMessage.content;
+    // Find the first user message that has content
+    const firstUserMessage = messages.find(m => m.role === 'user' && m.content?.trim());
+    if (firstUserMessage && firstUserMessage.content) {
+      const content = firstUserMessage.content.trim();
+      return content.length > 25
+        ? content.substring(0, 25) + '...'
+        : content;
+    }
+
+    // Fallback: use assistant response if no user message found
+    const firstAssistantMessage = messages.find(m => m.role === 'assistant' && m.content?.trim());
+    if (firstAssistantMessage && firstAssistantMessage.content) {
+      const content = firstAssistantMessage.content.trim();
+      const preview = content.length > 25
+        ? content.substring(0, 25) + '...'
+        : content;
+      return `AI: ${preview}`;
     }
 
     return 'New conversation';
   };
 
   const handleNewChat = () => {
+    console.log('🆕 Creating new chat...');
     onNewChat();
-    setTimeout(() => loadSessions(), 300);
+    // Reload sessions after a short delay to allow the new session to be created
+    setTimeout(() => {
+      console.log('🔄 Reloading sessions after new chat...');
+      debouncedLoadSessions();
+    }, 500);
   };
 
   return (
@@ -156,8 +201,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <div
                     key={session.id}
                     className="chat-item"
-                    onClick={() => {
-                      console.log('Loading conversation:', session.id);
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('🔄 Clicking to load conversation:', session.id);
+                      console.log('   Title:', session.title);
+                      console.log('   Timestamp:', session.timestamp);
                       onLoadConversation(session.id);
                     }}
                   >

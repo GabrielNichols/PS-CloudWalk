@@ -36,9 +36,9 @@ _warmup = get_warmup_instance()
 
 def _get_system_prompt(locale: str | None, user_id: str = None) -> str:
     """
-    Build system prompt.
+    Build system prompt with user context for personalization.
 
-    Uses structured role, goal, and backstory approach.
+    Uses structured role, goal, and backstory approach with memory integration.
     """
     from app.agents.prompts import build_system_prompt
 
@@ -47,11 +47,12 @@ def _get_system_prompt(locale: str | None, user_id: str = None) -> str:
     if user_id:
         try:
             context_prompt = get_user_context_prompt(user_id)
-        except Exception:
-            # Fail gracefully if context retrieval fails
-            pass
+            if context_prompt:
+                print(f"📋 KnowledgeAgent: Using user context for {user_id}")
+        except Exception as e:
+            print(f"⚠️ KnowledgeAgent: Failed to get user context: {e}")
 
-    # Build system prompt
+    # Build system prompt with user context
     system_msg = build_system_prompt(
         agent_name="knowledge",
         locale=locale,
@@ -137,13 +138,18 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         _profiler.set_metadata("question", question)
         _profiler.set_metadata("agent_version", "modular")
 
-        # Warm-up system integration
+        # Warm-up system integration - optimized
         if settings.knowledge_warmup_on_first_query and not _warmup.is_warmed_up():
-            logger.info("🔥 First query detected - triggering lazy warm-up...")
+            logger.info("🔥 First query detected - triggering optimized lazy warm-up...")
+            start_lazy = time.perf_counter()
             _warmup.warmup_lazy(question)
+            lazy_time = time.perf_counter() - start_lazy
             meta["warmup_triggered"] = True
+            meta["lazy_warmup_time"] = lazy_time
             meta["warmup_status"] = _warmup.get_warmup_status()
+            logger.info(f"✅ Lazy warm-up completed in {lazy_time:.2f}s")
         else:
+            meta["warmup_triggered"] = False
             meta["warmup_status"] = _warmup.get_warmup_status()
 
         with profile_step("KnowledgeAgent.Setup"):
@@ -151,14 +157,18 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
             state = enforce(state)
             question = state.get("message", "")
 
-            # Get embeddings (cached)
+            # Get embeddings (cached) - optimized
             emb_shared = _cache_manager.get("embeddings", "system")
             if not emb_shared:
+                logger.info("🔄 Loading embeddings for Knowledge Agent...")
                 from app.rag.embeddings import get_embeddings
 
                 emb_shared = get_embeddings()
                 if emb_shared:
                     _cache_manager.set("embeddings", emb_shared, "system", ttl=3600)
+                    logger.info("✅ Embeddings loaded and cached")
+                else:
+                    logger.warning("❌ Failed to load embeddings - RAG will be disabled")
 
         # Query complexity analysis
         with profile_step("KnowledgeAgent.ComplexityAnalysis"):
@@ -239,8 +249,28 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     "meta": {**meta, "error": "no_llm_client"},
                 }
 
+            # Build enhanced prompt with session context (short-term memory)
             sys_prompt = _get_system_prompt(state.get("locale"), state.get("user_id"))
-            prompt = f"{sys_prompt}\n\nQuestion: {question}\n\nContext:\n{combined_context}"
+
+            # Add recent conversation context for better understanding
+            conversation_context = ""
+            if state.get("messages"):
+                messages = state["messages"]
+                # Get recent conversation history (last 5 exchanges)
+                recent_messages = messages[-6:-1] if len(messages) > 6 else messages[:-1] if messages else []
+                if recent_messages:
+                    context_parts = []
+                    for msg in recent_messages:
+                        if hasattr(msg, 'type'):
+                            if msg.type == 'human':
+                                context_parts.append(f"User: {msg.content}")
+                            elif msg.type == 'ai':
+                                context_parts.append(f"Assistant: {msg.content}")
+                    if context_parts:
+                        conversation_context = "\n".join(context_parts)
+                        conversation_context = f"\n\nRECENT CONVERSATION:\n{conversation_context}"
+
+            prompt = f"{sys_prompt}\n\nQuestion: {question}\n\nContext:\n{combined_context}{conversation_context}"
 
             # Check LLM cache
             cached_answer = _cache_manager.get_llm_response(prompt)
