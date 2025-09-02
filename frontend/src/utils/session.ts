@@ -11,7 +11,9 @@ export const getClientFingerprint = (): string => {
   const fingerprint = [
     navigator.userAgent,
     navigator.language,
-    screen.width + 'x' + screen.height,
+    (typeof window !== 'undefined' && window.screen)
+      ? `${window.screen.width}x${window.screen.height}`
+      : 'unknown',
     new Date().getTimezoneOffset(),
     !!window.sessionStorage,
     !!window.localStorage,
