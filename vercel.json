@@ -1,38 +1,25 @@
 {
   "functions": {
-    "api/index.py": {
-      "runtime": "python3.12"
-    }
+    "api/index.py": { "runtime": "python3.12" }
   },
+  "builds": [
+    { "src": "api/index.py", "use": "@vercel/python" },
+    { "src": "frontend/package.json", "use": "@vercel/static-build", "config": { "distDir": "frontend/build" } }
+  ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/index.py" },
-    { "src": "/(.*)", "dest": "/frontend/$1" }
+    { "src": "^/api/(.*)", "dest": "/api/index.py" },
+    { "src": "^/(.*)\\.(css|js|json|png|jpg|svg|ico|txt|map)$", "dest": "/frontend/build/$1.$2" },
+    { "src": "^/(assets/.*)", "dest": "/frontend/build/$1" },
+    { "src": "^(?!/api)(.*)", "dest": "/frontend/build/index.html" }
   ],
-  "build": {
-    "env": {
-      "NODE_VERSION": "18"
-    }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/frontend/index.html" }
-  ],
+  "build": { "env": { "NODE_VERSION": "18" } },
   "headers": [
     {
       "source": "/api/(.*)",
       "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization"
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET, POST, PUT, DELETE, OPTIONS"
-        }
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" }
       ]
     }
   ]

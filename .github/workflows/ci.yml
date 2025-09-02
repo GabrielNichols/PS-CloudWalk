@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build --if-present
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Backend install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Backend lint import
+        run: |
+          python - <<'PY'
+          try:
+            from app.api.main import app
+            print('FastAPI app import OK')
+          except Exception as e:
+            print('Import failed:', e)
+            raise
+          PY
+
+      - name: Unit tests (subset)
+        run: |
+          pip install pytest
+          pytest -q tests/unit/test_knowledge_agent.py::test_knowledge_agent_returns_structure_without_crashing
