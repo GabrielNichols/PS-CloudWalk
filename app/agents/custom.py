@@ -30,6 +30,7 @@ def escalate_to_human(user_id: str, summary: str) -> Dict[str, Any]:
 def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_id = (state.get("user_id") if isinstance(state, dict) else None) or "unknown"
     message = (state.get("message") if isinstance(state, dict) else None) or ""
+    locale = (state.get("locale") if isinstance(state, dict) else None) or ""
 
     # Get user context for personalized escalation
     context_prompt = ""
@@ -69,45 +70,25 @@ def custom_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         conf = 0.0
 
-    # Enhanced escalation logic with user context
-    message_lower = message.lower()
+    # Slack notification with enhanced user context (no keyword gating)
+    channel = settings.slack_default_channel or "#support"
+    slack_message = f"User {user_id}: {message}"
 
-    if any(k in message_lower for k in ["human", "help", "assist", "atendente", "pessoa"]):
-        res = escalate_to_human(user_id, summary=message)
+    if context_prompt:
+        slack_message += f"\n\n👤 User Context: {context_prompt[:300]}..."
+        if "returning user" in context_prompt:
+            slack_message += "\n🔄 RETURNING USER - Check previous interactions"
+        if "interaction_count" in context_prompt:
+            slack_message += "\n📊 MULTIPLE INTERACTIONS - Review history"
 
-        # Personalized escalation message with user context
-        if context_prompt and ("returning user" in context_prompt or "interaction_count" in context_prompt):
-            answer = (
-                "CustomAgent: I see you've reached out before. I've escalated your request to our senior support team. "
-                "They'll have full context of your previous interactions and will reach out to you shortly."
-            )
-        else:
-            answer = (
-                "CustomAgent: I've escalated your request to our human support team. "
-                "A specialist will review your inquiry and contact you shortly."
-            )
+    res = send_slack_message(channel, slack_message)
 
-        grounding = {"mode": "human/escalation", "tools": [res], "confidence": conf}
-
-    else:
-        # Slack notification with enhanced user context
-        channel = settings.slack_default_channel or "#support"
-        slack_message = f"User {user_id}: {message}"
-
-        if context_prompt:
-            slack_message += f"\n\n👤 User Context: {context_prompt[:300]}..."
-            if "returning user" in context_prompt:
-                slack_message += "\n🔄 RETURNING USER - Check previous interactions"
-            if "interaction_count" in context_prompt:
-                slack_message += "\n📊 MULTIPLE INTERACTIONS - Review history"
-
-        res = send_slack_message(channel, slack_message)
-
-        answer = (
-            "CustomAgent: I've notified our support team on Slack about your request. "
-            "They're reviewing it now and will get back to you soon. Is there anything else I can help with?"
-        )
-        grounding = {"mode": "slack", "tools": [res], "confidence": conf}
+    answer = (
+        "Avisei nossa equipe no Slack sobre o seu pedido. Estão analisando e te retornam em breve. Posso ajudar com mais algo?"
+        if str(locale).lower().startswith("pt")
+        else "I've notified our support team on Slack about your request. They're reviewing it now and will get back to you soon. Anything else I can help with?"
+    )
+    grounding = {"mode": "slack", "tools": [res], "confidence": conf}
 
     # Update user context with custom interaction
     try:

@@ -13,6 +13,7 @@ from langsmith import traceable
 def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
     user_id = (state.get("user_id") if isinstance(state, dict) else None) or "unknown"
     message = (state.get("message") if isinstance(state, dict) else None) or ""
+    locale = (state.get("locale") if isinstance(state, dict) else None) or ""
 
     # Get user context for personalized support
     try:
@@ -44,33 +45,29 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Get user profile information
     profile = get_user_info(user_id)
 
-    # Enhanced category detection based on message content
-    message_lower = message.lower()
-    if "transfer" in message_lower or "transação" in message_lower:
-        category = "transfer"
-    elif "sign in" in message_lower or "login" in message_lower or "entrar" in message_lower:
-        category = "login"
-    elif "password" in message_lower or "senha" in message_lower:
-        category = "password_reset"
-    elif "account" in message_lower or "conta" in message_lower:
-        category = "account_issue"
-    else:
-        category = "general"
+    # Do not hardcode categories via keywords; let downstream workflows classify if needed
+    category = "general"
 
     # Create support ticket
     ticket = open_ticket(user_id, category, summary=message)
 
-    # Personalized response based on user context
+    # Localized, natural response (no rigid prefixes)
+    is_pt = str(locale).lower().startswith("pt")
     if context_prompt and "returning user" in context_prompt:
         answer = (
-            f"CustomerSupportAgent: Welcome back! I see you've contacted us before. "
-            f"I've opened a new support ticket (#{ticket['id']}) for your {category} issue. "
-            f"Our team will review your previous interactions and get back to you shortly."
+            (f"Bem-vindo de volta! Já abri um chamado (#{ticket['id']}). "
+             "Vamos considerar seus atendimentos anteriores e retornamos em seguida.")
+            if is_pt
+            else (f"Welcome back! I've opened a Support Ticket (#{ticket['id']}). "
+                  "We'll review your previous interactions and get back to you shortly.")
         )
     else:
         answer = (
-            f"CustomerSupportAgent: I've opened a support ticket (#{ticket['id']}) for your {category} issue. "
-            f"Our support team will contact you shortly to help resolve this."
+            (f"Abri um chamado (#{ticket['id']}). "
+             "Nossa equipe entrará em contato em breve para ajudar.")
+            if is_pt
+            else (f"I've opened a Support Ticket (#{ticket['id']}). "
+                  "Our team will contact you shortly to help resolve it.")
         )
 
     # Update user context with support interaction
@@ -79,9 +76,10 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         print(f"⚠️ Support: Failed to update user context: {e}")
 
+    # Do not use 'sources' here to avoid frontend rendering as web sources
     grounding = {
         "mode": "tools",
-        "sources": [
+        "artifacts": [
             {"type": "user_profile", "data": profile},
             {"type": "ticket", "data": ticket},
         ],
@@ -96,7 +94,7 @@ def support_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "answer": answer,
-        "agent": "CustomerSupportAgent",
+    "agent": "CustomerSupportAgent",
         "grounding": grounding,
         "meta": meta,
     }

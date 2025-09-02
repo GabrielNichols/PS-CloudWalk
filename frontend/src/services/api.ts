@@ -34,6 +34,7 @@ interface ApiResponse {
 
 type StreamEvent =
   | { type: 'chunk'; content: string; is_complete?: boolean }
+  | { type: 'progress'; stage: 'routing' | 'retrieval'; vector?: string | number; faq?: string | number }
   | {
       type: 'complete';
       answer: string;
@@ -121,6 +122,10 @@ class ChatApiService {
             const evt: StreamEvent = JSON.parse(payload);
             if (evt.type === 'chunk') {
               onChunk(evt.content, !!evt.is_complete);
+            } else if (evt.type === 'progress') {
+              // Surface lightweight progress feedback so the UI isn't blank while the LLM runs
+              const glyph = evt.stage === 'routing' ? '⏳' : '…';
+              onChunk(glyph, false);
             } else if (evt.type === 'complete') {
               const msg: Message = {
                 id: `msg_${Date.now()}`,

@@ -102,4 +102,11 @@ def system_prompt(agent: str, locale: str | None = None) -> str:
         )
     if agent == "router":
         return base + " Only classify intent and do not fabricate content."
+    if agent == "personality":
+        # Encourage gentle deferral for unrelated topics without keyword lists
+        return (
+            base
+            + " Keep conversation warm and natural within the InfinitePay scope. "
+            + "When the user steers into unrelated subjects, politely deflect and refocus on InfinitePay topics without sounding rigid."
+        )
     return base

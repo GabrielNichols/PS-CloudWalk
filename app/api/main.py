@@ -213,12 +213,33 @@ async def message_endpoint(payload: MessagePayload, request: Request):
             except Exception:
                 data = {"answer": str(result)}
 
+        # Post-process: ensure KnowledgeAgent has structured sources when meta.source_urls exist
+        try:
+            if isinstance(data, dict) and data.get("agent") == "KnowledgeAgent":
+                grounding = data.get("grounding") or {}
+                has_sources = bool(isinstance(grounding, dict) and grounding.get("sources"))
+                # Avoid adding sources for obvious out-of-scope apologetic answers
+                ans = (data.get("answer") or "").lower()
+                is_oos = any(p in ans for p in [
+                    "i don't know", "i do not know", "não tenho informações", "não sei", "fora do escopo"
+                ])
+                if not has_sources and not is_oos:
+                    meta = data.get("meta") or {}
+                    fallback_urls = meta.get("source_urls") or []
+                    if fallback_urls:
+                        grounding.setdefault("mode", (grounding or {}).get("mode", "vector+faq"))
+                        grounding["sources"] = [{"url": u} for u in fallback_urls]
+                        data["grounding"] = grounding
+        except Exception:
+            pass
+
         # Personality node must set `answer` and `agent`
         # Save assistant message to conversation store (best-effort)
         try:
             session_id = payload.user_id
             assistant_answer = data.get("answer", "")
             agent_used = data.get("agent", "Unknown")
+            route_trace = data.get("routing_history") or []
 
             # Update user contextual memory
             try:
@@ -237,10 +258,12 @@ async def message_endpoint(payload: MessagePayload, request: Request):
                 "content": assistant_answer,
                 "role": "assistant",
                 "timestamp": int(time.time() * 1000),
-                "sources": (data.get("grounding") or {}).get("sources") or [],
+                # Only knowledge agent should include web sources; others keep empty
+                "sources": (data.get("grounding") or {}).get("sources") if agent_used == "KnowledgeAgent" else [],
                 "metadata": {
                     "agent": data.get("agent", "Unknown"),
                     **(data.get("meta") or {}),
+                    "route_trace": route_trace,
                 },
             }
             if settings.database_url:
@@ -259,14 +282,17 @@ async def message_endpoint(payload: MessagePayload, request: Request):
             "agent": data.get("agent", "Unknown"),
             "answer": data.get("answer", ""),
             "grounding": data.get("grounding"),
-            "meta": data.get("meta", {}),
+            "meta": {
+                **(data.get("meta", {})),
+                "route_trace": data.get("routing_history") or [],
+            },
         }
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
 
 async def generate_streaming_response(payload: MessagePayload, request: Request):
-    """Generate streaming response using Server-Sent Events"""
+    """Generate streaming response using Server-Sent Events with lightweight progress events."""
     global graph, checkpointer
 
     # Ensure graph is initialized
@@ -274,34 +300,43 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
         yield f"data: {json.dumps({'error': 'Service initializing, please try again'})}\n\n"
         return
 
+    # Rate limiting
+    client_host = request.client.host if request.client is not None else "anonymous"
+    user_key = payload.user_id or client_host
+    if not _allow_request(user_key):
+        yield f"data: {json.dumps({'error': 'Rate limit exceeded'})}\n\n"
+        return
+
+    inputs = {
+        "user_id": payload.user_id,
+        "message": payload.message,
+        "locale": payload.locale,
+    }
+
+    # Start: routing progress
+    yield f"data: {json.dumps({'type': 'progress', 'stage': 'routing'})}\n\n"
+
     try:
-        # basic per-user rate limiting
-        client_host = request.client.host if request.client is not None else "anonymous"
-        user_key = payload.user_id or client_host
-        if not _allow_request(user_key):
-            yield f"data: {json.dumps({'error': 'Rate limit exceeded'})}\n\n"
-            return
-
-        inputs = {
-            "user_id": payload.user_id,
-            "message": payload.message,
-            "locale": payload.locale,
-        }
-
-        # NOTE: User message is saved by the regular /message endpoint
-        # This endpoint only processes the response to avoid duplication
-
-        # Get the full response first (we'll stream it in chunks)
-        result = graph.invoke(
+        # Execute graph in a background thread so we can emit periodic progress
+        invoke_task = asyncio.to_thread(
+            graph.invoke,
             inputs,
-            config={
-                "configurable": {
-                    "thread_id": payload.user_id,
-                }
+            {
+                "configurable": {"thread_id": payload.user_id},
             },
         )
 
-        # Normalize result to dict
+        # While the task is running, send "working" pings every second
+        while True:
+            if invoke_task.done():
+                break
+            yield f"data: {json.dumps({'type': 'progress', 'stage': 'retrieval'})}\n\n"
+            await asyncio.sleep(1.0)
+
+        # Get result
+        result = await invoke_task
+
+        # Normalize result
         if hasattr(result, "model_dump"):
             data = result.model_dump()
         elif isinstance(result, dict):
@@ -312,14 +347,57 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
             except Exception:
                 data = {"answer": str(result)}
 
-        # Stream the response in chunks
+        # Ensure KnowledgeAgent has sources: prefer meta.source_urls, else parse from answer
+        try:
+            agent_used = data.get("agent", "Unknown")
+            grounding = data.get("grounding") or {}
+            has_sources = (
+                isinstance(grounding, dict)
+                and isinstance(grounding.get("sources"), list)
+                and len(grounding.get("sources")) > 0
+            )
+            if agent_used == "KnowledgeAgent" and not has_sources:
+                # Avoid adding sources for clearly out-of-scope apologies
+                meta = data.get("meta") or {}
+                oos_flag = meta.get("oos")
+                is_oos = str(oos_flag).lower() == "true"
+                if not is_oos:
+                    # 1) prefer explicit source_urls captured during retrieval
+                    src_urls = meta.get("source_urls") or []
+                    if src_urls:
+                        grounding.setdefault("mode", grounding.get("mode", "vector+faq"))
+                        grounding["sources"] = [{"url": u} for u in src_urls]
+                        data["grounding"] = grounding
+                    else:
+                        # 2) fallback: extract URLs from the answer text
+                        import re
+                        urls = re.findall(r"https?://[^\s)]+", data.get("answer", ""))
+                        if urls:
+                            grounding.setdefault("sources", [])
+                            seen = set()
+                            for u in urls:
+                                if u not in seen:
+                                    grounding["sources"].append({"url": u})
+                                    seen.add(u)
+                            data["grounding"] = grounding
+        except Exception:
+            pass
+
+        # If retrieval metrics exist, advertise them before streaming content
+        try:
+            if data.get('agent') == 'KnowledgeAgent':
+                meta = data.get('meta') or {}
+                if meta.get('vector_docs_count') or meta.get('faq_docs_count'):
+                    yield f"data: {json.dumps({'type': 'progress', 'stage': 'retrieval', 'vector': meta.get('vector_docs_count'), 'faq': meta.get('faq_docs_count')})}\n\n"
+        except Exception:
+            pass
+
+        # Stream answer chunks
         answer = data.get("answer", "")
+        route_trace = data.get("routing_history") or []
         words = answer.split()
 
-        # Send start event
         yield f"data: {json.dumps({'type': 'start', 'agent': data.get('agent', 'Unknown')})}\n\n"
-
-        # Stream answer word by word
         current_text = ""
         for i, word in enumerate(words):
             current_text += word + " "
@@ -330,15 +408,17 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
                 'is_complete': i == len(words) - 1
             }
             yield f"data: {json.dumps(chunk_data)}\n\n"
-            await asyncio.sleep(0.05)  # Small delay to simulate streaming
+            await asyncio.sleep(0.05)
 
-        # Send completion event with full metadata
         completion_data = {
             'type': 'complete',
             'agent': data.get('agent', 'Unknown'),
             'answer': answer,
             'grounding': data.get('grounding'),
-            'meta': data.get('meta', {}),
+            'meta': {
+                **(data.get('meta', {})),
+                'route_trace': route_trace,
+            },
         }
         yield f"data: {json.dumps(completion_data)}\n\n"
 
@@ -351,10 +431,11 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
                 "content": answer,
                 "role": "assistant",
                 "timestamp": int(time.time() * 1000),
-                "sources": (data.get("grounding") or {}).get("sources") or [],
+                "sources": (data.get("grounding") or {}).get("sources") if (data.get('agent') == "KnowledgeAgent") else [],
                 "metadata": {
                     "agent": data.get("agent", "Unknown"),
                     **(data.get("meta") or {}),
+                    "route_trace": route_trace,
                 },
             }
             if settings.database_url:

@@ -22,8 +22,18 @@ def add_user_message(state):
     # Add user message to conversation
     user_message = HumanMessage(content=state["message"])
 
-    # Return updated state with new message appended
-    return {"messages": existing_messages + [user_message]}
+    # Clear per-turn/volatile fields to prevent stale data from previous turn
+    # This avoids repeating the last answer when the route changes (e.g., to personality)
+    cleared_state = {
+        "messages": existing_messages + [user_message],
+        "answer": None,
+        "retrieval": None,
+        "agent": None,
+        "grounding": None,
+        "meta": {},
+    }
+
+    return cleared_state
 
 
 def add_ai_response(state):
@@ -31,8 +41,10 @@ def add_ai_response(state):
     Add AI response to conversation history.
     """
     if state.get("answer"):
+        existing_messages = state.get("messages", [])
         ai_message = AIMessage(content=state["answer"])
-        return {"messages": [ai_message]}
+        # Append AI message to existing history
+        return {"messages": existing_messages + [ai_message]}
     return {}
 
 
@@ -138,20 +150,9 @@ def pre_greeting_routing(state):
 
     No hardcoded rules - AI analyzes context and makes smart decisions.
     """
-    current_route = state.get("current_route")
-    routing_history = state.get("routing_history", [])
-
-    # Check if we should continue with existing agent based on context
-    if current_route and routing_history:
-        last_routing = routing_history[-1] if routing_history else {}
-        confidence = last_routing.get("confidence", 0)
-
-        # Continue with active route if confidence is high and context suggests continuation
-        if confidence > 0.8:
-            print(f"🔄 Stateful routing: Continuing with {current_route} (confidence: {confidence})")
-            return current_route
-
-    # Let AI make intelligent routing decisions for all cases
+    # Always let the AI router evaluate the latest message.
+    # The previous behavior of continuing the same agent when confidence > 0.8
+    # made the router "sticky" and caused repeated/irrelevant responses.
     return "intelligent_router"
 
 

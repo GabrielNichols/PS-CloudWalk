@@ -6,7 +6,6 @@ from langsmith import traceable
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
-from langdetect import detect
 from app.graph.guardrails import enforce
 from app.graph.memory import get_user_context_prompt, update_user_context
 from app.settings import settings
@@ -81,10 +80,12 @@ def _intelligent_routing(message: str, user_id: str, context: Optional[Dict[str,
     from app.agents.prompts import build_system_prompt, create_agent_messages
 
     # Create structured messages
+    # Add a minimal, non-semantic jitter to avoid upstream caching of identical prompts
+    routing_time = datetime.now().isoformat(timespec="seconds")
     messages = create_agent_messages(
         agent_name="router",
-        user_message=message,
-        user_context=context_prompt
+        user_message=f"{message}",
+        user_context=f"{context_prompt}\n[routing_time: {routing_time}]"
     )
 
     try:
@@ -163,14 +164,15 @@ def intelligent_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Update routing history
     routing_history = state.get("routing_history", [])
-    routing_history.append({
+    routing_event = {
         "timestamp": datetime.now().isoformat(),
         "message": message,
         "decision": routing_decision["target_agent"],
         "confidence": routing_decision["routing_confidence"],
         "reason": routing_decision["routing_reason"],
         "fallback": routing_decision["fallback"]
-    })
+    }
+    routing_history.append(routing_event)
 
     # Log routing decision
     print(f"🎯 AI Router: {user_id} -> {routing_decision['target_agent'].upper()}")
@@ -188,29 +190,36 @@ def intelligent_router_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "routing_reason": routing_decision["routing_reason"],
         "user_context": user_context,
         "message": message,
-        "user_id": user_id
+    "user_id": user_id,
+    # Reset ephemeral fields to avoid leaking previous answers/grounding
+    "answer": None,
+    "agent": None,
+    "grounding": None,
+    "meta": {"steps": [
+        f"Router analyzed message and chose {routing_decision['target_agent']} (confidence {routing_decision['routing_confidence']:.2f})",
+    ]},
     }
 
 @traceable(name="RouterDecision", metadata={"agent": "RouterAgent", "tags": ["router", "decision"]})
 def route_decision(state: Dict[str, Any]) -> str:
-    """Enhanced routing decision with memory awareness."""
-    current_route = state.get("current_route")
-    routing_history = state.get("routing_history", [])
+    """Routing decision uses the latest AI intent for each message.
 
-    # If we have an active route and recent history, continue with it
-    if current_route and routing_history:
-        last_routing = routing_history[-1] if routing_history else {}
-        if last_routing.get("confidence", 0) > 0.8:
-            print(f"🔄 Continuing with active route: {current_route}")
-            return current_route
+    Previous behavior continued the last route if confidence was high (>0.8),
+    which made the router too "sticky" and caused incorrect routing on follow-up
+    messages (e.g., staying on Personality for product questions). We now
+    prioritize the most recent AI decision placed in `state['intent']`.
+    """
 
-    # New routing decision
-    intent = state.get("intent")
-    if intent == "custom":
-        return "custom"
-    if intent == "support":
-        return "support"
-    if intent == "knowledge":
-        return "knowledge"
+    # Prefer the latest AI intent computed for the current message
+    intent = (state or {}).get("intent")
 
-    return "knowledge"  # Default fallback
+    # Log a concise routing trace
+    if intent:
+        print(f"🧭 Route decision (latest intent): {intent}")
+
+    # Support all known agents explicitly
+    if intent in {"custom", "support", "knowledge", "personality"}:
+        return intent
+
+    # Fallback to knowledge
+    return "knowledge"

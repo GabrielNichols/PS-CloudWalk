@@ -357,9 +357,18 @@ def knowledge_node(state: Dict[str, Any]) -> Dict[str, Any]:
         with profile_step("KnowledgeAgent.Finalize"):
             mode_value = "vector+faq" if (has_vector or has_faq) else "none"
 
+            # Prefer prioritized URLs; if empty, fallback to meta-provided source_urls
+            fallback_urls = []
+            try:
+                fallback_urls = meta.get("source_urls") or []
+            except Exception:
+                fallback_urls = []
+            effective_urls = prioritized_urls if prioritized_urls else fallback_urls
+            sources_objs = ([{"url": u} for u in effective_urls] if effective_urls else [])
             grounding = {
                 "mode": mode_value,
-                "sources": prioritized_urls if attach_sources else [],
+                # Send sources to frontend even if answer text didn't include a Sources: section
+                "sources": sources_objs,
                 "confidence": confidence,
             }
 

@@ -59,6 +59,7 @@ PERSONALITY INSTRUCTIONS:
 - Reference previous conversation topics when relevant
 - Keep responses friendly, engaging, and conversational
 - Avoid repeating greetings if you've already greeted the user
+- Stay within InfinitePay topics; if the user asks about unrelated subjects, gently deflect and refocus on InfinitePay matters
 """
     elif agent_name == "knowledge":
         system_content += """
@@ -124,7 +125,8 @@ RESPONSE FORMAT: Return ONLY the agent name (PersonalityAgent, KnowledgeAgent, C
 
     # Add language preference
     if locale:
-        if locale.lower().startswith("pt"):
+        loc = str(locale).lower()
+        if loc.startswith("pt"):
             system_content += "\n\nLANGUAGE: Respond in Brazilian Portuguese (pt-BR)"
         else:
             system_content += "\n\nLANGUAGE: Respond in English"
@@ -164,12 +166,13 @@ def create_agent_messages(
 
     # Tool results (if any)
     if tool_results:
-        for result in tool_results:
-            tool_msg = ToolMessage(
-                content=str(result.get("content", "")),
-                tool_call_id=result.get("tool_call_id", ""),
-                name=result.get("tool_name", "")
-            )
+        for i, result in enumerate(tool_results, 1):
+            content = result.get("content") or result.get("data") or str(result)
+            name = result.get("tool_name") or result.get("name") or f"tool_{i}"
+            try:
+                tool_msg = ToolMessage(content=str(content), name=name)
+            except TypeError:
+                tool_msg = ToolMessage(content=str(content))
             messages.append(tool_msg)
 
     return messages
@@ -279,17 +282,21 @@ GOAL: {config.goal}
 
 BACKSTORY: {config.backstory}
 
-CRITICAL ROUTING RULES:
-- If message is a greeting ("hi", "hello", "olá", "oi", "good morning") → PersonalityAgent
-- If message asks about products ("what is", "how much", "price", "features", "maquininha") → KnowledgeAgent
-- If message reports problems ("error", "can't login", "problem", "help", "issue") → CustomerSupportAgent
-- If message requests human ("speak to human", "supervisor", "operator") → CustomAgent
+ROUTER INSTRUCTIONS - INTELLIGENT ROUTING BASED ON CONTEXT:
+- Consider the full conversation context and the user's intent
+- Choose the most appropriate agent for this specific turn
+
+AVAILABLE AGENTS:
+- PersonalityAgent: casual conversation, greetings, introductions, personalization
+- KnowledgeAgent: product/service information, pricing, features, how-to
+- CustomerSupportAgent: technical/account issues, troubleshooting, support requests
+- CustomAgent: escalation to human, urgent matters, supervisor involvement
 
 USER MESSAGE: {user_message}
 
 USER CONTEXT: {user_context}
 
-TASK: Analyze the message and respond with ONLY the agent name that should handle this request.
-Choose from: PersonalityAgent, KnowledgeAgent, CustomerSupportAgent, CustomAgent
+TASK: Analyze the message and context naturally and return ONLY the agent name that should handle this request now.
+Allowed values: PersonalityAgent, KnowledgeAgent, CustomerSupportAgent, CustomAgent
 
 RESPONSE (agent name only):"""

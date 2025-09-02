@@ -193,7 +193,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
   };
 
   const renderDebug = (message: Message) => {
-    const hasDebug = message.metadata?.steps || message.metadata?.retrieval || message.metadata?.tokens;
+  const hasDebug = message.metadata?.steps || message.metadata?.retrieval || message.metadata?.tokens || (message.metadata as any)?.route_trace;
     if (!hasDebug) return null;
 
     const isOpen = !!openDebugIds[message.id];
@@ -213,6 +213,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                 <ol>
                   {(message.metadata.steps as string[]).map((s, i) => (
                     <li key={i}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {(message.metadata as any)?.route_trace && (
+              <div className="debug-section">
+                <div className="debug-title">Route trace</div>
+                <ol>
+                  {((message.metadata as any).route_trace as any[]).map((r, i) => (
+                    <li key={i}>
+                      <strong>{r.decision}</strong> · conf {Math.round((r.confidence || 0) * 100)}% · {r.reason}
+                    </li>
                   ))}
                 </ol>
               </div>

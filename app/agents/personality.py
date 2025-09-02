@@ -13,10 +13,10 @@ def _format_answer(answer: str, locale: str | None) -> str:
     # Remove any hardcoded prefixes that limit the AI's response
     lines = answer.strip()
 
-    # Clean up any duplicate sources sections if they exist
+    # Personality should not emit Sources; remove if present
     parts = lines.split("\nSources:")
-    if len(parts) > 2:
-        lines = parts[0] + "\nSources:" + parts[1]
+    if len(parts) >= 2:
+        lines = parts[0].strip()
 
     return lines
 
@@ -144,7 +144,7 @@ Continue the conversation naturally, making the user feel remembered and valued.
         except Exception as e:
             print(f"⚠️ PersonalityAgent AI generation failed: {e}")
             # Minimal fallback
-            if locale and str(locale).startswith("pt"):
+            if locale and str(locale).lower().startswith("pt"):
                 answer = "Olá! Como posso ajudar você hoje?"
             else:
                 answer = "Hello! How can I help you today?"
@@ -162,6 +162,8 @@ Continue the conversation naturally, making the user feel remembered and valued.
             update_user_context(user_id, message, agent, styled)
         except Exception as e:
             print(f"⚠️ PersonalityAgent: Failed to update user context: {e}")
+
+    # Out-of-scope handling now guided by system prompts/guardrails without hardcoded keywords
 
     return {
         "answer": styled,
