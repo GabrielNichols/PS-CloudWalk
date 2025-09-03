@@ -1,11 +1,11 @@
 {
   "builds": [
     { "src": "api/index.py", "use": "@vercel/python" },
-    { "src": "frontend/package.json", "use": "@vercel/static-build", "config": { "distDir": "frontend/build" } }
+  { "src": "frontend/package.json", "use": "@vercel/static-build", "config": { "distDir": "build" } }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" },
-    { "source": "/((?!api).*)", "destination": "/frontend/build/index.html" }
+  { "source": "/((?!api).*)", "destination": "/index.html" }
   ],
   "build": { "env": { "NODE_VERSION": "18" } },
   "headers": [
