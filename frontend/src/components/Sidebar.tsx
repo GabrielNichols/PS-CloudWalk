@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MessageSquare, Plus, Trash2, Clock, User, Bot, X, Menu } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, User, Bot } from 'lucide-react';
 import { Message } from '../types';
 import { sessionApi } from '../services/api';
 
@@ -28,7 +28,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [loading, setLoading] = useState(false);
   const [lastMessageCount, setLastMessageCount] = useState(0);
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     if (loading) {
       console.log('⚠️ loadSessions already in progress, skipping...');
       return;
@@ -46,7 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [loading]);
 
   // Debounced version to prevent rapid successive calls
   const debouncedLoadSessions = useCallback(() => {
@@ -59,15 +59,15 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     // Set new timeout
     (window as any).__sidebarTimeout = setTimeout(() => {
-      if (!loading) { // Double check loading state
+      if (!loading) {
         loadSessions();
       }
     }, 100);
-  }, [loading]);
+  }, [loading, loadSessions]);
 
   useEffect(() => {
     loadSessions();
-  }, []);
+  }, [loadSessions]);
 
   // Only reload sessions when the first message is added to an empty conversation
   useEffect(() => {

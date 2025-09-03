@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, ExternalLink, Clock, Zap, Target, ChevronDown } from 'lucide-react';
+import { Send, Bot, ExternalLink, Clock, Zap, Target, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Message } from '../types';
 import Sidebar from './Sidebar';
