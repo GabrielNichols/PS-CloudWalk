@@ -1,0 +1,30 @@
+# Exclude non-runtime files from the serverless bundle
+.dockerignore
+.gitignore
+.github/
+.docker/
+docker/
+frontend/
+!.vercelignore
+
+node_modules/
+**/__pycache__/
+**/*.pyc
+
+# Tests, docs, examples
+README.md
+.tests/
+scripts/
+*.md
+
+# Local data
+*.log
+.env*
+data/
+
+# Build artifacts
+**/.pytest_cache/
+**/.mypy_cache/
+**/.coverage
+**/dist/
+**/build/

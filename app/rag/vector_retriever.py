@@ -5,7 +5,6 @@ import asyncio
 import time
 import logging
 
-import numpy as np
 from langchain_core.documents import Document
 
 from app.rag.vectorstore_milvus import MilvusVectorStore
@@ -87,8 +86,12 @@ class VectorRAGRetriever:
 
         return retriever
 
-    def _embed(self, text: str) -> np.ndarray:
-        return np.array(self.embedding.embed_query(text))
+    def _embed(self, text: str) -> list[float]:
+        """Embed text without requiring numpy to keep deployment slim."""
+        try:
+            return list(self.embedding.embed_query(text))
+        except Exception:
+            return []
 
     def probe_embed_ms(self, text: str) -> int:
         """Diagnostics: measure embed latency without affecting retrieval result."""
