@@ -49,8 +49,10 @@ def get_langgraph_checkpointer():
         return _checkpointer
 
     db_url = getattr(settings, "database_url", "")
-    if not db_url:
-        print("⚠️ No DATABASE_URL configured - using MemorySaver")
+    
+    # Skip PostgreSQL attempts if DATABASE_URL is empty or not set
+    if not db_url or db_url.strip() == "":
+        print("🔄 Using MemorySaver (no DATABASE_URL configured)")
         _checkpointer = MemorySaver()
         return _checkpointer
 
@@ -114,8 +116,10 @@ def get_memory_store():
         return _memory_store
 
     db_url = getattr(settings, "database_url", "")
-    if not db_url:
-        print("⚠️ No DATABASE_URL configured - using in-memory storage for long-term memory")
+    
+    # Skip PostgreSQL attempts if DATABASE_URL is empty or not set
+    if not db_url or db_url.strip() == "":
+        print("🔄 Using in-memory storage for long-term memory (no DATABASE_URL configured)")
         _memory_store = {}
         return _memory_store
 

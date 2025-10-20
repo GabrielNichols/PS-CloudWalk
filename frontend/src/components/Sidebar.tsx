@@ -27,15 +27,17 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastMessageCount, setLastMessageCount] = useState(0);
+  const loadingRef = React.useRef(false);
 
   const loadSessions = useCallback(async () => {
-    if (loading) {
+    if (loadingRef.current) {
       console.log('⚠️ loadSessions already in progress, skipping...');
       return;
     }
 
     console.log('🔄 Loading sessions list...');
     try {
+      loadingRef.current = true;
       setLoading(true);
       const sessionList = await sessionApi.getSessionList();
       console.log(`✅ Loaded ${sessionList.length} sessions`);
@@ -44,13 +46,14 @@ const Sidebar: React.FC<SidebarProps> = ({
       console.warn('❌ Failed to load sessions:', error);
       setSessions([]);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
-  }, [loading]);
+  }, []); // Sem dependências para evitar loop
 
   // Debounced version to prevent rapid successive calls
   const debouncedLoadSessions = useCallback(() => {
-    if (loading) return;
+    if (loadingRef.current) return;
 
     // Clear any existing timeout
     if ((window as any).__sidebarTimeout) {
@@ -59,15 +62,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
     // Set new timeout
     (window as any).__sidebarTimeout = setTimeout(() => {
-      if (!loading) {
+      if (!loadingRef.current) {
         loadSessions();
       }
     }, 100);
-  }, [loading, loadSessions]);
+  }, [loadSessions]);
 
+  // Load sessions only once on mount
   useEffect(() => {
     loadSessions();
-  }, [loadSessions]);
+  }, []); // Empty array = executa só uma vez
 
   // Only reload sessions when the first message is added to an empty conversation
   useEffect(() => {

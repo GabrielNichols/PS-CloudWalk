@@ -39,17 +39,17 @@ graph = None
 async def initialize_checkpointer():
     global checkpointer, graph
 
-    print("🚀 FastAPI Startup - Initializing Knowledge Agent...")
+    print("[STARTUP] FastAPI Startup - Initializing Knowledge Agent...")
 
     # Initialize warm-up system (includes embeddings pre-loading)
-    print("🔥 Initializing Knowledge Agent warm-up system...")
+    print("[WARMUP] Initializing Knowledge Agent warm-up system...")
     try:
         from app.agents.knowledge.warmup import initialize_warmup_system
         initialize_warmup_system()
     except Exception as e:
-        print(f"⚠️ Failed to initialize warm-up system: {e}")
+        print(f"[WARNING] Failed to initialize warm-up system: {e}")
         # Fallback to basic embeddings pre-loading
-        print("🔄 Pre-loading embeddings as fallback...")
+        print("[FALLBACK] Pre-loading embeddings as fallback...")
         try:
             from app.rag.embeddings import get_embeddings
             from app.agents.knowledge.cache_manager import get_cache_manager
@@ -58,15 +58,15 @@ async def initialize_checkpointer():
             if embeddings:
                 cache_manager = get_cache_manager()
                 cache_manager.set("embeddings", embeddings, "system", ttl=3600)
-                print("✅ Embeddings pre-loaded and cached")
+                print("[SUCCESS] Embeddings pre-loaded and cached")
             else:
-                print("⚠️ Embeddings not available - RAG will be limited")
+                print("[WARNING] Embeddings not available - RAG will be limited")
         except Exception as e2:
-            print(f"⚠️ Failed to pre-load embeddings: {e2}")
+            print(f"[WARNING] Failed to pre-load embeddings: {e2}")
 
     # Initialize graph with checkpointer and long-term memory store
     try:
-        print("🔄 Initializing graph, checkpointer and long-term memory store...")
+        print("[INIT] Initializing graph, checkpointer and long-term memory store...")
         checkpointer = get_langgraph_checkpointer()
 
         # Initialize long-term memory store
@@ -75,23 +75,23 @@ async def initialize_checkpointer():
             from app.graph.memory import get_memory_store
             store = get_memory_store()
             if store and not isinstance(store, dict):  # Check if it's not in-memory fallback
-                print("✅ Long-term memory store initialized")
+                print("[SUCCESS] Long-term memory store initialized")
             else:
-                print("⚠️ Using in-memory fallback for long-term memory")
+                print("[WARNING] Using in-memory fallback for long-term memory")
         except Exception as e:
-            print(f"⚠️ Long-term memory store initialization failed: {e}")
+            print(f"[WARNING] Long-term memory store initialization failed: {e}")
 
         graph = build_graph(checkpointer=checkpointer, store=store)
-        print("✅ Graph initialized successfully with memory capabilities")
+        print("[SUCCESS] Graph initialized successfully with memory capabilities")
     except Exception as e:
-        print(f"⚠️ Graph initialization failed, using fallback: {e}")
+        print(f"[WARNING] Graph initialization failed, using fallback: {e}")
         # Fallback to in-memory
         from langgraph.checkpoint.memory import MemorySaver
         checkpointer = MemorySaver()
         graph = build_graph(checkpointer=checkpointer)
-        print("✅ Graph initialized with fallback checkpointer")
+        print("[SUCCESS] Graph initialized with fallback checkpointer")
 
-    print("🎯 FastAPI Startup Complete - Knowledge Agent Ready!")
+    print("[READY] FastAPI Startup Complete - Knowledge Agent Ready!")
 
 
 _rate_limiter_store: dict[str, list[float]] = {}
@@ -318,12 +318,14 @@ async def generate_streaming_response(payload: MessagePayload, request: Request)
 
     try:
         # Execute graph in a background thread so we can emit periodic progress
-        invoke_task = asyncio.to_thread(
-            graph.invoke,
-            inputs,
-            {
-                "configurable": {"thread_id": payload.user_id},
-            },
+        invoke_task = asyncio.create_task(
+            asyncio.to_thread(
+                graph.invoke,
+                inputs,
+                {
+                    "configurable": {"thread_id": payload.user_id},
+                },
+            )
         )
 
         # While the task is running, send "working" pings every second
